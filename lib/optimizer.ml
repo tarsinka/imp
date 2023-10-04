@@ -30,10 +30,12 @@ and deadcode_reduction seq block =
   | [] -> seq
   | h :: t -> (
       let res = deadcode_reduction_stm h block in
-      let next_block = List.hd block.next in
+      let len = List.length block.next in
       match res with
-      | Some stm -> stm :: deadcode_reduction t next_block
-      | None -> deadcode_reduction t next_block)
+      | Some stm when len > 0 -> stm :: deadcode_reduction t (List.hd block.next)
+      | Some stm -> stm :: []
+      | None when len > 0 -> deadcode_reduction t (List.hd block.next)
+      | None -> [])
 
 (*
   Constant operations reduction    

@@ -68,7 +68,7 @@ let rec block_of post stm =
   | If (ld, s1, s2) ->
       let b1 = blocks_of ~post s1 in
       let b2 = blocks_of ~post s2 in
-      { zero_block with label = ld.l; kind = BBool ld.cnt; next = [ b1; b2 ] }
+      { zero_block with label = ld.l; kind = BBool ld.cnt; next = [ b1 ; b2 ] }
   | While (ld, s) ->
       let b = blocks_of ~post s in
       { zero_block with label = ld.l; kind = BBool ld.cnt; next = [ post; b ] }
