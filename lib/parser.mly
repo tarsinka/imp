@@ -100,6 +100,7 @@ typ:
         | TY_CHAR       { TChar }
         | TY_BOOL       { TBool }
         | TY_STRING     { TString }
+        | t=typ ; MUL   { TPointer t }
         | LARRAY ; t=typ ; RARRAY { TArray t }
         | id=VARNAME { TStruct id }
 

@@ -2,6 +2,7 @@ open Syntax
 open Ast
 open Analysis
 open Optimizer
+open Typecheck
 open Mips
 open Builtins
 open Format
@@ -106,8 +107,7 @@ let tr_function type_env struct_env fdef =
            else tr_expr ri e1 @@ tr_expr (ri + 1) e2) @@ op t.(ri) t.(ri) t.(ri + 1) *)
         eva @@ evb
         @@
-        if alloc_b > alloc_a then
-          op t.(ri) t.(ri + 1) t.(ri)
+        if alloc_b > alloc_a then op t.(ri) t.(ri + 1) t.(ri)
         else op t.(ri) t.(ri) t.(ri + 1)
     | Ref id -> (
         match Hashtbl.find_opt env id with
@@ -174,9 +174,9 @@ let tr_function type_env struct_env fdef =
         let offset = get_field_offset def field in
         tr_mem (Arr (Var id, Val (Int offset)))
         (* match sct_def_opt with
-        | Some def ->
-            
-        | None -> failwith "That structure hasn't been defined!") *)
+           | Some def ->
+
+           | None -> failwith "That structure hasn't been defined!") *)
     | Str (Read m, _) -> tr_mem m
     | _ -> failwith "Illegal operation!"
   in
@@ -235,23 +235,44 @@ module Translator = struct
       to do, producing a new AST which will be sent
       to the translating process.
     *)
+    let type_env = Hashtbl.create 16 in
+    List.iter (fun (t, id) -> Hashtbl.add type_env id t) prog.globals;
+
+    let function_env = Hashtbl.create 16 in
+    List.iter
+      (fun (f : fun_def) -> Hashtbl.add function_env f.name f)
+      (__builtin_print_char_def :: __builtin_print_int_def :: prog.functions);
+
+    let struct_env = Hashtbl.create 16 in
+    List.iter
+      (fun (s : struct_def) -> Hashtbl.add struct_env s.name s)
+      prog.structs;
+
+    let env =
+      { typing = type_env; functions = function_env; structs = struct_env }
+    in
+
+    Printf.printf "Type-check the code\n";
+    List.iter
+      (fun (f : fun_def) ->
+        let wc = tp_fun f env in
+        if wc then () else failwith "Typecheck error!")
+      prog.functions;
+
+    Printf.printf "Dataflow analysis\n";
+
     List.iter
       (fun f ->
         let s = f.code in
         let b = blocks_of s in
         let df = dataflow b in
         print_dataflow df;
+        Printf.printf "Done\n";
         let rd = deadcode_reduction s df in
         Printf.printf "%s\n" (show_seq rd))
       prog.functions;
 
     Printf.printf "Generating assembly code\n";
-
-    let type_env = Hashtbl.create 16 in
-    List.iter (fun (t, id) -> Hashtbl.add type_env id t) prog.globals;
-
-    let struct_env = Hashtbl.create 16 in
-    List.iter (fun s -> Hashtbl.add struct_env s.name s) prog.structs;
 
     let fn_asm =
       List.fold_right

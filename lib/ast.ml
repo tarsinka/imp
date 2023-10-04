@@ -3,6 +3,7 @@ type typ =
   | TChar
   | TBool
   | TString
+  | TPointer of typ
   | TArray of typ
   | TStruct of string
   | TVoid
@@ -100,10 +101,7 @@ type program = {
 
 let str_to_array str =
   let len = String.length str in
-  Printf.printf "%s\n" str;
   let rec aux i =
     if i >= len - 1 then Val (Int 0) :: [] else Val (Char str.[i]) :: aux (i + 1)
   in
-  let res = aux 1 in
-  Printf.printf "%d" (List.length res);
-  res
+  aux 1
