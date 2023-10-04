@@ -1,0 +1,83 @@
+var int a;
+var bool b;
+
+struct pair
+{
+    int x;
+    int y
+}
+
+struct test
+{
+    int x;
+    bool b
+}
+
+function int main(int argc)
+{
+    var int c;
+    var int p;
+    var int i;
+    var pair k;
+    var test h;
+    var [int] t;
+    var [char] msg;
+    var [int] arr;
+    var string str;
+
+    i = 0;
+
+    str = "Hello, World!";
+    print(str);
+
+    arr = [0, 1, 2, 3, 4];
+
+    print_int(arr[3]);
+
+    c = 5;
+    p = &c;
+
+    *(p) = 2;
+    print_int(c);
+
+    k = new pair;
+    k.x = 7;
+
+    h = new test;
+    h.x = 8;
+
+    print_int(k.x);
+    print_char(10);
+    print_int(h.x);
+
+    t = new[int, 9];
+    
+    while i < 8
+    {
+        i = i + 1;
+        t[i] = 96 + i;
+
+        print_int(t[i]);
+        print_char(10);
+    }
+
+    t[4] = 10;
+
+    return p;
+}
+
+function void print([char] str)
+{
+    var char c;
+    var int i;
+
+    c = 0;
+    i = -1;
+
+    while i == -1 | c > 0
+    {
+        i = i + 1;
+        c = str[i];
+        print_char(c);
+    }
+}

@@ -1,0 +1,19 @@
+function main(argc, argv)
+{
+    var x;
+    var y;
+    var z;
+
+    x = 5;
+    y = 2;
+
+    z = 2 * x + y + 5;
+    print_int(z);
+
+    z = x * y;
+
+    while x == 5 {
+        x = x + 1;
+        y = y * x;
+    }
+}

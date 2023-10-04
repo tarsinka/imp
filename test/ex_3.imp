@@ -1,0 +1,6 @@
+function main(argc, argv)
+{
+    var x;
+    x = 15;
+    return 0;
+}
