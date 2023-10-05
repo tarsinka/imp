@@ -7,6 +7,8 @@ open Mips
 open Builtins
 open Format
 
+type memory_mapper = Reg of register | Offset of int
+
 let tr_bop = function
   | Add -> add
   | Sub -> sub
@@ -37,13 +39,15 @@ let tr_function type_env struct_env fdef =
   
   *)
   let env = Hashtbl.create 16 in
-  (* let set_stack_data axe k (id, t) =
-       let size = match t with Array s -> s | _ -> 1 in
-       let offset = axe * size * (if axe = 1 then 4 * (k + 1) else 4 * (k + 2)) in
-       Hashtbl.add env id offset;
-     in *)
-  List.iteri (fun k (_, id) -> Hashtbl.add env id (4 * (k + 1))) fdef.args;
-  List.iteri (fun k (_, id) -> Hashtbl.add env id (-4 * (k + 2))) fdef.locals;
+
+  List.iteri
+    (fun k (_, id) ->
+      let mm = if k < 0 then Reg a.(k) else Offset (4 * (k + 1)) in
+      Hashtbl.add env id mm)
+    fdef.args;
+  List.iteri
+    (fun k (_, id) -> Hashtbl.add env id (Offset (-4 * (k + 2))))
+    fdef.locals;
 
   List.iter (fun (t, id) -> Hashtbl.add type_env id t) fdef.locals;
 
@@ -56,7 +60,8 @@ let tr_function type_env struct_env fdef =
   let rec tr_expr ri = function
     | Var id -> (
         match Hashtbl.find_opt env id with
-        | Some offset -> lw t.(ri) offset fp
+        | Some (Offset os) -> lw t.(ri) os fp
+        | Some (Reg rg) -> move t.(ri) rg
         | None -> la t.(ri) id @@ lw t.(ri) 0 t.(ri))
     | Val ty -> (
         match ty with
@@ -94,8 +99,8 @@ let tr_function type_env struct_env fdef =
 
         !!
         Nevertheless there is a problem. Indeed, it breaks
-        our semantic, especially for non-associative
-        operators such as Lt.
+        our semantic, especially when calling a function on
+        a deref pointer or a global var.
       *)
         let alloc_a = req_register e1 in
         let alloc_b = req_register e2 in
@@ -103,40 +108,55 @@ let tr_function type_env struct_env fdef =
         let e1_, e2_ = if alloc_b > alloc_a then (e2, e1) else (e1, e2) in
         let eva = tr_expr ri e1_ in
         let evb = tr_expr (ri + 1) e2_ in
-        (* (if alloc_b > alloc_a then tr_expr ri e2 @@ tr_expr (ri + 1) e1
-           else tr_expr ri e1 @@ tr_expr (ri + 1) e2) @@ op t.(ri) t.(ri) t.(ri + 1) *)
         eva @@ evb
         @@
         if alloc_b > alloc_a then op t.(ri) t.(ri + 1) t.(ri)
         else op t.(ri) t.(ri) t.(ri + 1)
     | Ref id -> (
         match Hashtbl.find_opt env id with
-        | Some offset -> addi t0 fp offset
+        | Some (Offset os) -> addi t0 fp os
+        | Some (Reg _) -> failwith "Bad memory access!"
         | None -> la t0 id)
     | Deref e -> tr_expr ri e @@ lw t.(ri) 0 t.(ri)
     | Call (id, args) ->
-        (*
         
+      (*
+      
           Arguments are first placed in the a0, a1, a2, a3
           registers.
+          
+          If more, then stay in t_i after evaluation and
+          t_i is pushed on the stack.
+          
+          For now, since the optimization isn't relevant
+          we just push arguments on the stack
 
-          If more, there then stay in t0 after evaluation and
-          t0 is pushed on the stack.
-        
         *)
+
         let args_code =
           List.fold_right
-            (fun e code -> code @@ tr_expr ri e @@ push t0)
+            (fun e code -> code @@ tr_expr ri e @@ push t.(ri))
             args nop
         in
         args_code @@ jal id @@ addi sp sp (4 * List.length args)
-    (* and store_args args =
-       let rec aux i = function
-         | [] -> nop
-         | h :: t when i < 4 -> aux (i + 1) t @@ tr_expr h @@ move a.(i) t0
-         | l -> List.fold_right (fun e code -> code @@ tr_expr e @@ push t0) l nop
-       in
-       aux 0 args *)
+      
+        (* List.iteri
+             (fun i (_, id) -> Hashtbl.add env id (Offset (4 * (i + 1))))
+             fdef.args;
+              let rec aux i = function
+             | [] -> nop
+             | h :: tl when i < 4 ->
+                 aux (i + 1) tl
+                 @@ tr_expr ri h
+                 @@ move a.(i) t.(ri)
+                 @@ subi sp sp 4
+             | l ->
+                 List.fold_right
+                   (fun e code -> code @@ tr_expr ri e @@ push t.(ri))
+                   l nop
+           in
+           let argc = List.length args in
+           aux 0 args @@ jal id @@ addi sp sp (4 * argc) *)
     | Alloc e ->
         tr_expr ri e @@ move a0 t.(ri) @@ li v0 9 @@ syscall @@ move t.(ri) v0
     | Read m -> tr_expr ri (Deref (tr_mem m))
@@ -189,7 +209,8 @@ let tr_function type_env struct_env fdef =
     | Assign ld -> (
         let id, e = ld.cnt in
         match Hashtbl.find_opt env id with
-        | Some offset -> tr_expr 0 e @@ sw t0 offset fp
+        | Some (Offset os) -> tr_expr 0 e @@ sw t0 os fp
+        | Some (Reg rg) -> tr_expr 0 e @@ move rg t0
         | None -> la t1 id @@ sw t1 0 t0)
     | If (ld, s1, s2) ->
         let then_label = label_fmt () in

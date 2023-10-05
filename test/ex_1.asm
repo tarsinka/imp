@@ -10,7 +10,7 @@ main:
 	subi $sp, $sp, 4
 	sw $ra, 0($sp)
 	addi $fp, $sp, 4
-	subi $sp, $sp, 16
+	subi $sp, $sp, 20
 	li $t0, 0
 	subi $sp, $sp, 4
 	sw $t0, 0($sp)
@@ -54,47 +54,65 @@ main:
 	subi $sp, $sp, 4
 	sw $t0, 0($sp)
 	move $t0, $sp
-	sw $t0, -20($fp)
-	lw $t0, -20($fp)
+	sw $t0, -24($fp)
+	lw $t0, -24($fp)
 	subi $sp, $sp, 4
 	sw $t0, 0($sp)
 	jal print
 	addi $sp, $sp, 4
 	li $t0, 1
-	sw $t0, -12($fp)
-	li $t0, 5
-	sw $t0, -8($fp)
-	lw $t0, -8($fp)
-	li $t1, 5
-	slt $t0, $t0, $t1
-	bnez $t0, __main_0
-	lw $t0, -8($fp)
-	subi $sp, $sp, 4
-	sw $t0, 0($sp)
-	jal print_int
-	addi $sp, $sp, 4
-	b __main_1
-__main_0:
-	lw $t0, -20($fp)
-	subi $sp, $sp, 4
-	sw $t0, 0($sp)
-	jal print
-	addi $sp, $sp, 4
-__main_1:
-	addi $t0, $fp, -8
 	sw $t0, -16($fp)
-	lw $t0, -16($fp)
-	lw $t1, -8($fp)
-	li $t2, 6
-	mul $t1, $t1, $t2
-	sw $t1, 0($t0)
-	lw $t0, -16($fp)
+	li $t0, 90
+	sw $t0, -12($fp)
+	li $t0, 9
+	subi $sp, $sp, 4
+	sw $t0, 0($sp)
+	li $t0, 8
+	subi $sp, $sp, 4
+	sw $t0, 0($sp)
+	jal square
+	addi $sp, $sp, 8
+	sw $t0, -8($fp)
+	addi $t0, $fp, -8
+	sw $t0, -20($fp)
+	lw $t0, -12($fp)
+	subi $sp, $sp, 4
+	sw $t0, 0($sp)
+	jal print_char
+	addi $sp, $sp, 4
+	lw $t0, -20($fp)
 	lw $t0, 0($t0)
 	subi $sp, $sp, 4
 	sw $t0, 0($sp)
 	jal print_int
 	addi $sp, $sp, 4
-	lw $t0, -8($fp)
+	lw $t0, -20($fp)
+	lw $t0, 0($t0)
+	li $t1, 6
+	add $t0, $t0, $t1
+	subi $sp, $fp, 4
+	lw $ra, 0($sp)
+	addi $sp, $sp, 4
+	lw $fp, 0($sp)
+	addi $sp, $sp, 4
+	jr $ra
+	li $t0, 0
+	subi $sp, $fp, 4
+	lw $ra, 0($sp)
+	addi $sp, $sp, 4
+	lw $fp, 0($sp)
+	addi $sp, $sp, 4
+	jr $ra
+square:
+	subi $sp, $sp, 4
+	sw $fp, 0($sp)
+	subi $sp, $sp, 4
+	sw $ra, 0($sp)
+	addi $fp, $sp, 4
+	subi $sp, $sp, 0
+	lw $t0, 4($fp)
+	lw $t1, 8($fp)
+	mul $t0, $t0, $t1
 	subi $sp, $fp, 4
 	lw $ra, 0($sp)
 	addi $sp, $sp, 4
