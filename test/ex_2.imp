@@ -14,13 +14,19 @@ function int main()
 	var [char] str;
     var [int] static_arr;
     var [int] dyn_arr;
+    var pair n;
 
 	str = "Hello, World!";
     print(str);
 
 	b = true;
     c = 'Z';
-	x = square(9, 9);
+	
+    n = new pair;
+    n.x = 77;
+    n.y = 98;
+
+    x = square(n.x, n.y);
 
     p = &x;
 
