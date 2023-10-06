@@ -119,27 +119,34 @@ let tr_function type_env struct_env fdef =
         | None -> la t0 id)
     | Deref e -> tr_expr ri e @@ lw t.(ri) 0 t.(ri)
     | Call (id, args) ->
-        
-      (*
-      
-          Arguments are first placed in the a0, a1, a2, a3
-          registers.
-          
-          If more, then stay in t_i after evaluation and
-          t_i is pushed on the stack.
-          
-          For now, since the optimization isn't relevant
-          we just push arguments on the stack
-
+        (*
+          Save common use registers on the stack 
+          from the caller before calling given function.
         *)
-
+        let rec help save fetch i regs =
+          if i <= ri then
+            help (save @@ push regs.(i)) (pop regs.(i) @@ fetch) (i + 1) regs
+          else (save, fetch)
+        in
+        let s, f = help nop nop 0 t in
         let args_code =
           List.fold_right
             (fun e code -> code @@ tr_expr ri e @@ push t.(ri))
             args nop
         in
-        args_code @@ jal id @@ addi sp sp (4 * List.length args)
-      
+        s @@ args_code @@ jal id @@ addi sp sp (4 * List.length args) @@ f
+        (*
+    
+        Arguments are first placed in the a0, a1, a2, a3
+        registers.
+        
+        If more, then stay in t_i after evaluation and
+        t_i is pushed on the stack.
+        
+        For now, since the optimization isn't relevant
+        we just push arguments on the stack
+
+      *)
         (* List.iteri
              (fun i (_, id) -> Hashtbl.add env id (Offset (4 * (i + 1))))
              fdef.args;
@@ -193,10 +200,6 @@ let tr_function type_env struct_env fdef =
         in
         let offset = get_field_offset def field in
         tr_mem (Arr (Var id, Val (Int offset)))
-        (* match sct_def_opt with
-           | Some def ->
-
-           | None -> failwith "That structure hasn't been defined!") *)
     | Str (Read m, _) -> tr_mem m
     | _ -> failwith "Illegal operation!"
   in
@@ -256,6 +259,7 @@ module Translator = struct
       to do, producing a new AST which will be sent
       to the translating process.
     *)
+    
     let type_env = Hashtbl.create 16 in
     List.iter (fun (t, id) -> Hashtbl.add type_env id t) prog.globals;
 
