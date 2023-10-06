@@ -1,5 +1,10 @@
 var int a;
 
+struct pair
+{
+    int x; int y
+}
+
 function int main()
 {
     var int x;
@@ -7,18 +12,32 @@ function int main()
 	var bool b;
 	var int* p;
 	var [char] str;
+    var [int] static_arr;
+    var [int] dyn_arr;
 
 	str = "Hello, World!";
     print(str);
 
 	b = true;
     c = 'Z';
-	x = square(8, 9);
+	x = square(9, 9);
 
     p = &x;
 
     print_char(c);
     print_int(*(p));
+
+    static_arr = [1, 2, 3, 4, 5];
+    dyn_arr = new [int, 5];
+    x = 0;
+
+    while x < 5
+    {
+        print_char(' ');
+        dyn_arr[x] = 2 * static_arr[x];
+        print_int(dyn_arr[x]);
+        x = x + 1;
+    }
 
     return *(p) + 6;
 }
