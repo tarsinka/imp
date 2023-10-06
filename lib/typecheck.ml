@@ -53,7 +53,7 @@ and te_expr e env =
         List.fold_right
           (fun e p ->
             let tye = te_expr e env in
-            if tye = p then tye else failwith "")
+            if p = TVoid || tye = p then tye else failwith "")
           l TVoid
       in
       TArray ty

@@ -124,7 +124,7 @@ let tr_function type_env struct_env fdef =
           from the caller before calling given function.
         *)
         let rec help save fetch i regs =
-          if i <= ri then
+          if i < ri then
             help (save @@ push regs.(i)) (pop regs.(i) @@ fetch) (i + 1) regs
           else (save, fetch)
         in
@@ -134,7 +134,10 @@ let tr_function type_env struct_env fdef =
             (fun e code -> code @@ tr_expr ri e @@ push t.(ri))
             args nop
         in
-        s @@ args_code @@ jal id @@ addi sp sp (4 * List.length args) @@ f
+        s @@ args_code @@ jal id
+        @@ addi sp sp (4 * List.length args)
+        @@ move t.(ri) t.(0)
+        @@ f
         (*
     
         Arguments are first placed in the a0, a1, a2, a3
@@ -259,7 +262,6 @@ module Translator = struct
       to do, producing a new AST which will be sent
       to the translating process.
     *)
-    
     let type_env = Hashtbl.create 16 in
     List.iter (fun (t, id) -> Hashtbl.add type_env id t) prog.globals;
 
