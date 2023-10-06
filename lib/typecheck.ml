@@ -93,8 +93,8 @@ and te_mem m env =
   | Str (Var id, fd) -> (
       let sctopt = Hashtbl.find_opt env.typing id in
       match sctopt with
-      | Some (TStruct _) ->
-          let sct = Hashtbl.find env.structs id in
+      | Some (TStruct sname) ->
+          let sct = Hashtbl.find env.structs sname in
           let rec help = function
             | [] -> TVoid
             | (ty, s) :: t -> if s = fd then ty else help t
