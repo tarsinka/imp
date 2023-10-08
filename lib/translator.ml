@@ -292,13 +292,13 @@ module Translator = struct
       List.fold_right
         (fun f l ->
           let s = f.code in
-          Printf.printf "%s\n" (show_seq s);
           let b = blocks_of s in
-          print_dataflow b;
           let df = dataflow b in
-          print_dataflow df;
+          (* print_dataflow df; *)
+          let chailin = reg_dist df 0 in
+          Hashtbl.iter (fun k v -> Printf.printf "%d -> %d\n" k v) chailin;
           let rd = deadcode_reduction s df in
-          Printf.printf "%s\n" (show_seq rd);
+          (* Printf.printf "%s\n" (show_seq rd); *)
           { f with code = rd } :: l)
         prog.functions []
     in
