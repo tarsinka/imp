@@ -288,17 +288,20 @@ module Translator = struct
 
     Printf.printf "Dataflow analysis\n";
 
-    List.iter
-      (fun f ->
-        let s = f.code in
-        let b = blocks_of s in
-        let df = dataflow b in
-        print_dataflow df;
-        Printf.printf "Done\n";
-        let rd = deadcode_reduction s df in
-        Printf.printf "%s\n" (show_seq rd))
-      prog.functions;
-
+    let _ =
+      List.fold_right
+        (fun f l ->
+          let s = f.code in
+          Printf.printf "%s\n" (show_seq s);
+          let b = blocks_of s in
+          print_dataflow b;
+          let df = dataflow b in
+          print_dataflow df;
+          let rd = deadcode_reduction s df in
+          Printf.printf "%s\n" (show_seq rd);
+          { f with code = rd } :: l)
+        prog.functions []
+    in
     Printf.printf "Generating assembly code\n";
 
     let fn_asm =

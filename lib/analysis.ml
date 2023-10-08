@@ -83,7 +83,7 @@ let rec block_of post stm =
 and blocks_of ?(post = zero_block) = function
   | [] -> post
   | h :: t ->
-      let next_block = blocks_of t in
+      let next_block = blocks_of ~post t in
       block_of next_block h
 
 let rec dataflow block =
