@@ -57,7 +57,17 @@ let tr_function type_env struct_env fdef =
     "__" ^ fdef.name ^ "_" ^ string_of_int !lc
   in
 
-  let rec tr_expr ri = function
+  let rec save_regs save fetch i ri regs =
+    if i < ri then
+      save_regs (save @@ push regs.(i)) (pop regs.(i) @@ fetch) (i + 1) ri regs
+    else (save, fetch)
+  in
+
+  let rec tr_expr ri e =
+    let tr_args li =
+      List.fold_right (fun e code -> code @@ tr_expr ri e @@ push t.(ri)) li nop
+    in
+    match e with
     | Var id -> (
         match Hashtbl.find_opt env id with
         | Some (Offset os) -> lw t.(ri) os fp
@@ -123,17 +133,8 @@ let tr_function type_env struct_env fdef =
           Save common use registers on the stack 
           from the caller before calling given function.
         *)
-        let rec help save fetch i regs =
-          if i < ri then
-            help (save @@ push regs.(i)) (pop regs.(i) @@ fetch) (i + 1) regs
-          else (save, fetch)
-        in
-        let s, f = help nop nop 0 t in
-        let args_code =
-          List.fold_right
-            (fun e code -> code @@ tr_expr ri e @@ push t.(ri))
-            args nop
-        in
+        let s, f = save_regs nop nop 0 ri t in
+        let args_code = tr_args args in
         s @@ args_code @@ jal id
         @@ addi sp sp (4 * List.length args)
         @@ move t.(ri) t.(0)
@@ -167,13 +168,17 @@ let tr_function type_env struct_env fdef =
            in
            let argc = List.length args in
            aux 0 args @@ jal id @@ addi sp sp (4 * argc) *)
+    (* | DynCall (m, args) ->
+        let s, f = save_regs nop nop 0 ri t in
+        s
+        @@ jalr t.(ri)
+        @@ addi sp sp (4 * List.length args)
+        @@ move t.(ri) t.(0)
+        @@ f *)
     | Alloc e ->
         tr_expr ri e @@ move a0 t.(ri) @@ li v0 9 @@ syscall @@ move t.(ri) v0
     | Read m -> tr_expr ri (Deref (tr_mem m))
     | New name ->
-        (*
-             
-        *)
         let sct = Hashtbl.find struct_env name in
         let size = sizeof_struct sct in
         tr_expr ri (Alloc (Val (Int size)))
@@ -244,6 +249,31 @@ let tr_function type_env struct_env fdef =
   @@ subi sp sp (4 * List.length fdef.locals)
   @@ tr_seq fdef.code @@ li t0 0 @@ subi sp fp 4 @@ pop ra @@ pop fp @@ jr ra
 
+(* let tr_struct sct =
+  let desc_size = 4 * (List.length sct.methods + 1) in
+  let desc_name = "__" ^ sct.name ^ "_" in
+  let assign =
+    Assign { cnt = (desc_name, Alloc (Val (Int desc_size))); l = -1 }
+  in
+  let parent = Write { cnt = (Raw (Var desc_name), Val (Int 0)); l = -1 } in
+  let desc =
+    List.fold_right
+      (fun m (i, code) ->
+        ( i + 1,
+          code
+          @@ tr_expr
+               (Write
+                  {
+                    cnt =
+                      ( Raw (BOP (Add, Var m.name, Val (Int (i * 4)))),
+                        Ref m.name );
+                    l = -1;
+                  })
+               0 ))
+      sct.methods (1, nop)
+  in
+  tr_expr assign 0 @@ tr_expr parent 0 @@ desc *)
+
 (*
   The head sequence is the very first sequence.
   It shall push the amount of arguments and the arguments
@@ -286,22 +316,20 @@ module Translator = struct
         if wc then () else failwith "Typecheck error!")
       prog.functions;
 
-    Printf.printf "Dataflow analysis\n";
-
     let _ =
-      List.fold_right
-        (fun f l ->
-          let s = f.code in
-          let b = blocks_of s in
-          let df = dataflow b in
-          (* print_dataflow df; *)
-          let chailin = reg_dist df 0 in
-          Hashtbl.iter (fun k v -> Printf.printf "%d -> %d\n" k v) chailin;
-          let rd = deadcode_reduction s df in
-          (* Printf.printf "%s\n" (show_seq rd); *)
-          { f with code = rd } :: l)
-        prog.functions []
-    in
+         List.fold_right
+           (fun f l ->
+             let s = f.code in
+             Printf.printf "%s\n" (show_seq s);
+             let analysis = dataflow s in
+             print_analysis analysis;
+             let _ = reg_dist analysis 0 in
+             (* Hashtbl.iter (fun k v -> Printf.printf "%s -> %d\n" k v) chailin; *)
+             let rd = deadcode_reduction s [] analysis in
+             Printf.printf "%s\n" (show_seq rd);
+             { f with code = rd } :: l)
+           prog.functions []
+       in
     Printf.printf "Generating assembly code\n";
 
     let fn_asm =

@@ -92,7 +92,7 @@ functions:
         BEGIN ; locals=list(vars) ; seq=list(stm) ; END { { name=name ; args=args ; code=seq ; locals=locals ; return=t } }
 
 structs:
-        STRUCT ; name = VARNAME ; BEGIN ; v=separated_list(SEMI_COL, typed_id) ; END { { name=name ; fields=v ; desc={parents=[] ; functions=[]} } }
+        STRUCT ; name = VARNAME ; BEGIN ; v=separated_list(SEMI_COL, typed_id) ; END { { name=name ; fields=v } }
 
 typ:
         | TY_VOID       { TVoid }

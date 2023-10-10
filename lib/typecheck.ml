@@ -77,6 +77,7 @@ and te_expr e env =
   | Call (fn, _) ->
       let fundef = Hashtbl.find env.functions fn in
       fundef.return
+  (* | DynCall (m, _) -> te_mem m env *)
   | Read m -> te_mem m env
   | NewArray (t, _) -> TArray t
 
