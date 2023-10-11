@@ -316,15 +316,15 @@ module Translator = struct
         if wc then () else failwith "Typecheck error!")
       prog.functions;
 
-    let _ =
+    let opt_functions =
          List.fold_right
            (fun f l ->
              let s = f.code in
              Printf.printf "%s\n" (show_seq s);
              let analysis = dataflow s in
              print_analysis analysis;
-             let _ = reg_dist analysis 0 in
-             (* Hashtbl.iter (fun k v -> Printf.printf "%s -> %d\n" k v) chailin; *)
+             let chailin = reg_dist analysis 0 in
+             Hashtbl.iter (fun k v -> Printf.printf "%s -> %d\n" k v) chailin;
              let rd = deadcode_reduction s [] analysis in
              Printf.printf "%s\n" (show_seq rd);
              { f with code = rd } :: l)
@@ -336,7 +336,7 @@ module Translator = struct
       List.fold_right
         (fun (def : Ast.fun_def) code ->
           label def.name @@ tr_function type_env struct_env def @@ code)
-        prog.functions nop
+        opt_functions nop
     in
     let text = head @@ fn_asm @@ __builtin_print_int @@ __builtin_print_char in
     let data =

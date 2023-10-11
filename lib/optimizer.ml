@@ -27,7 +27,7 @@ let rec deadcode_reduction_stm stm analysis =
 
 and deadcode_reduction seq tl analysis =
   match seq with
-  | [] -> seq
+  | [] -> List.rev tl
   | h :: t ->
       let res =
         match deadcode_reduction_stm h analysis with
