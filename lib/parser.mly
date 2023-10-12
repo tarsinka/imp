@@ -19,7 +19,7 @@
 %token ADD SUB MUL DIV MOD
 %token AND OR XOR ROL ROR
 %token LT LE GT GE EQ NE
-%token NEW
+%token NEW 
 
 %token ASSIGN IF ELSE WHILE RETURN
 %token SEMI_COL BEGIN END LPAR RPAR LARRAY RARRAY COMMA DOT
@@ -92,7 +92,7 @@ functions:
         BEGIN ; locals=list(vars) ; seq=list(stm) ; END { { name=name ; args=args ; code=seq ; locals=locals ; return=t } }
 
 structs:
-        STRUCT ; name = VARNAME ; BEGIN ; v=separated_list(SEMI_COL, typed_id) ; END { { name=name ; fields=v } }
+        STRUCT ; name = VARNAME ; BEGIN ; v=list(vars) ; methods=list(functions) ; END { { name=name ; fields=v ; methods } }
 
 typ:
         | TY_VOID       { TVoid }

@@ -31,7 +31,7 @@ let rec req_register = function
   | BOP (_, e1, e2) -> req_register e1 + req_register e2
   | _ -> 1
 
-let tr_function type_env struct_env fdef =
+let tr_function gl_env fdef =
   (*
   
     Here we instantiate the local hash table for the function.
@@ -49,7 +49,7 @@ let tr_function type_env struct_env fdef =
     (fun k (_, id) -> Hashtbl.add env id (Offset (-4 * (k + 2))))
     fdef.locals;
 
-  List.iter (fun (t, id) -> Hashtbl.add type_env id t) fdef.locals;
+  List.iter (fun (t, id) -> Hashtbl.add gl_env.typing id t) fdef.locals;
 
   let lc = ref (-1) in
   let label_fmt () =
@@ -123,19 +123,27 @@ let tr_function type_env struct_env fdef =
         if alloc_b > alloc_a then op t.(ri) t.(ri + 1) t.(ri)
         else op t.(ri) t.(ri) t.(ri + 1)
     | Ref id -> (
-        match Hashtbl.find_opt env id with
-        | Some (Offset os) -> addi t0 fp os
+      Printf.printf "ref %s\n" id;  
+      match Hashtbl.find_opt env id with
+        | Some (Offset os) -> addi t.(ri) fp os
         | Some (Reg _) -> failwith "Bad memory access!"
-        | None -> la t0 id)
+        | None -> la t.(ri) id)
     | Deref e -> tr_expr ri e @@ lw t.(ri) 0 t.(ri)
     | Call (id, args) ->
         (*
           Save common use registers on the stack 
           from the caller before calling given function.
         *)
+
+        Printf.printf "Fun call %s\n" id;
+
+        let call =
+          if Hashtbl.mem gl_env.functions id then jal id
+          else tr_expr ri (Var id) @@ jalr t.(ri)
+        in
         let s, f = save_regs nop nop 0 ri t in
         let args_code = tr_args args in
-        s @@ args_code @@ jal id
+        s @@ args_code @@ call
         @@ addi sp sp (4 * List.length args)
         @@ move t.(ri) t.(0)
         @@ f
@@ -168,18 +176,19 @@ let tr_function type_env struct_env fdef =
            in
            let argc = List.length args in
            aux 0 args @@ jal id @@ addi sp sp (4 * argc) *)
-    (* | DynCall (m, args) ->
+    | DynCall (e, args) ->
         let s, f = save_regs nop nop 0 ri t in
-        s
+        let func = tr_expr ri e in
+        s @@ func
         @@ jalr t.(ri)
         @@ addi sp sp (4 * List.length args)
         @@ move t.(ri) t.(0)
-        @@ f *)
+        @@ f
     | Alloc e ->
         tr_expr ri e @@ move a0 t.(ri) @@ li v0 9 @@ syscall @@ move t.(ri) v0
     | Read m -> tr_expr ri (Deref (tr_mem m))
     | New name ->
-        let sct = Hashtbl.find struct_env name in
+        let sct = Hashtbl.find gl_env.structs name in
         let size = sizeof_struct sct in
         tr_expr ri (Alloc (Val (Int size)))
     | NewArray (_, e) -> tr_expr ri (Alloc e)
@@ -200,10 +209,10 @@ let tr_function type_env struct_env fdef =
     | Raw e -> e
     | Arr (source, offset) -> BOP (Add, source, BOP (Mul, Val (Int 4), offset))
     | Str (Var id, field) ->
-        let t = Hashtbl.find type_env id in
+        let t = Hashtbl.find gl_env.typing id in
         let def =
           match t with
-          | TStruct name -> Hashtbl.find struct_env name
+          | TStruct name -> Hashtbl.find gl_env.structs name
           | _ -> failwith "This is not a structure type!"
         in
         let offset = get_field_offset def field in
@@ -239,40 +248,42 @@ let tr_function type_env struct_env fdef =
     | Expr ld -> tr_expr 0 ld.cnt
     | Write ld ->
         let d, e = ld.cnt in
-        tr_expr 0 (tr_mem d)
-        (* @@ push t0 *)
-        @@ tr_expr 1 e
-        (* @@ pop t1 *)
-        @@ sw t1 0 t0
+        tr_expr 0 (tr_mem d) @@ tr_expr 1 e @@ sw t1 0 t0
   in
   push fp @@ push ra @@ addi fp sp 4
   @@ subi sp sp (4 * List.length fdef.locals)
   @@ tr_seq fdef.code @@ li t0 0 @@ subi sp fp 4 @@ pop ra @@ pop fp @@ jr ra
 
 (* let tr_struct sct =
-  let desc_size = 4 * (List.length sct.methods + 1) in
-  let desc_name = "__" ^ sct.name ^ "_" in
-  let assign =
-    Assign { cnt = (desc_name, Alloc (Val (Int desc_size))); l = -1 }
-  in
-  let parent = Write { cnt = (Raw (Var desc_name), Val (Int 0)); l = -1 } in
-  let desc =
-    List.fold_right
-      (fun m (i, code) ->
-        ( i + 1,
-          code
-          @@ tr_expr
-               (Write
-                  {
-                    cnt =
-                      ( Raw (BOP (Add, Var m.name, Val (Int (i * 4)))),
-                        Ref m.name );
-                    l = -1;
-                  })
-               0 ))
-      sct.methods (1, nop)
-  in
-  tr_expr assign 0 @@ tr_expr parent 0 @@ desc *)
+   let desc_size = 4 * (List.length sct.methods + 1) in
+   let desc_name = "__" ^ sct.name ^ "_" in
+
+   (*
+     Then it generates the assemly code of all of the
+     methods intern to the struct and get their address.
+   *)
+
+   let assign =
+     Assign { cnt = (desc_name, Alloc (Val (Int desc_size))); l = -1 }
+   in
+   let parent = Write { cnt = (Raw (Var desc_name), Val (Int 0)); l = -1 } in
+   let desc =
+     List.fold_right
+       (fun m (i, code) ->
+         ( i + 1,
+           code
+           @@ tr_stm
+                (Write
+                   {
+                     cnt =
+                       ( Raw (BOP (Add, Var desc_name, Val (Int (i * 4)))),
+                         Ref m.name );
+                     l = -1;
+                   })
+                0 ))
+       sct.methods (1, nop)
+   in
+   tr_stm assign @@ tr_stm parent @@ desc *)
 
 (*
   The head sequence is the very first sequence.
@@ -294,6 +305,7 @@ module Translator = struct
     *)
     let type_env = Hashtbl.create 16 in
     List.iter (fun (t, id) -> Hashtbl.add type_env id t) prog.globals;
+    List.iter (fun (f : fun_def) -> Hashtbl.add type_env f.name f.return) prog.functions;
 
     let function_env = Hashtbl.create 16 in
     List.iter
@@ -316,27 +328,27 @@ module Translator = struct
         if wc then () else failwith "Typecheck error!")
       prog.functions;
 
-    let opt_functions =
-         List.fold_right
-           (fun f l ->
-             let s = f.code in
-             Printf.printf "%s\n" (show_seq s);
-             let analysis = dataflow s in
-             print_analysis analysis;
-             let chailin = reg_dist analysis 0 in
-             Hashtbl.iter (fun k v -> Printf.printf "%s -> %d\n" k v) chailin;
-             let rd = deadcode_reduction s [] analysis in
-             Printf.printf "%s\n" (show_seq rd);
-             { f with code = rd } :: l)
-           prog.functions []
-       in
+    let _ =
+      List.fold_right
+        (fun f l ->
+          let s = f.code in
+          Printf.printf "%s\n" (show_seq s);
+          let analysis = dataflow s in
+          print_analysis analysis;
+          (* let chailin = reg_dist analysis 0 in
+          Hashtbl.iter (fun k v -> Printf.printf "%s -> %d\n" k v) chailin; *)
+          let rd = deadcode_reduction s [] analysis in
+          Printf.printf "%s\n" (show_seq rd);
+          { f with code = rd } :: l)
+        prog.functions []
+    in
     Printf.printf "Generating assembly code\n";
 
     let fn_asm =
       List.fold_right
         (fun (def : Ast.fun_def) code ->
-          label def.name @@ tr_function type_env struct_env def @@ code)
-        opt_functions nop
+          label def.name @@ tr_function env def @@ code)
+        prog.functions nop
     in
     let text = head @@ fn_asm @@ __builtin_print_int @@ __builtin_print_char in
     let data =

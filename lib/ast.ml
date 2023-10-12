@@ -41,7 +41,7 @@ type expr =
   | Ref of string
   | Deref of expr
   | Call of string * expr list
-  (* | DynCall of mem * expr list *)
+  | DynCall of expr * expr list
   | Read of mem
   | New of string
   | NewArray of typ * expr
@@ -79,7 +79,7 @@ type fun_def = {
 type struct_def = {
   name : string;
   fields : (typ * string) list;
-  (* methods : fun_def list; *)
+  methods : fun_def list;
 }
 
 let get_field_offset sct field =

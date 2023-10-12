@@ -27,7 +27,7 @@ let rec tp_expr e ty env =
       Printf.printf "Check function call of %s\n" fn;
       let fundef = Hashtbl.find_opt env.functions fn in
       match fundef with
-      | None -> failwith "Unknown function!"
+      | None -> tp_expr (DynCall(Var fn, args)) ty env
       | Some def ->
           if List.length def.args <> List.length args then
             failwith
@@ -77,7 +77,7 @@ and te_expr e env =
   | Call (fn, _) ->
       let fundef = Hashtbl.find env.functions fn in
       fundef.return
-  (* | DynCall (m, _) -> te_mem m env *)
+  | DynCall (e, _) -> te_expr (Deref e) env
   | Read m -> te_mem m env
   | NewArray (t, _) -> TArray t
 

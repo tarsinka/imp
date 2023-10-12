@@ -24,7 +24,7 @@ let rec vars = function
   | BOP (_, e1, e2) -> VarSet.union (vars e1) (vars e2)
   | Deref e | Alloc e -> vars e
   | Ref v -> VarSet.singleton v
-  | Call (_, args) ->
+  | Call (_, args) | DynCall (_, args) ->
       List.fold_right (fun e set -> VarSet.union (vars e) set) args VarSet.empty
   | Read m -> vars_mem m
 
@@ -138,7 +138,14 @@ let rec flow_of pred es stm =
         let fa = flows_of label es s1 in
         let fb = flows_of label es s2 in
         EdgeSet.union fa fb
-    | While (_, s) -> flows_of label es s
+    | While (_, s) ->
+        let final_lb = final s in
+        let back =
+          LabelSet.fold
+            (fun fl es -> EdgeSet.union es (EdgeSet.singleton (fl, label)))
+            final_lb EdgeSet.empty
+        in
+        EdgeSet.union (flows_of label es s) back
   in
   EdgeSet.union flow (EdgeSet.add (pred, label) es)
 
@@ -173,7 +180,8 @@ let dataflow seq =
             succs VarSet.empty
         in
         let alt =
-           not (VarSet.equal in_ block_m.vars_in) || not (VarSet.equal out_ block_m.vars_out)
+          (not (VarSet.equal in_ block_m.vars_in))
+          || not (VarSet.equal out_ block_m.vars_out)
         in
         iterate
           {
@@ -186,7 +194,9 @@ let dataflow seq =
           t (altered || alt)
   in
   let rec fixpoint a =
-    let alt, it = iterate a (BlockMap.fold (fun i _ l -> i :: l) a.blocks []) false in
+    let alt, it =
+      iterate a (BlockMap.fold (fun i _ l -> i :: l) a.blocks []) false
+    in
     if alt then fixpoint it else it
   in
   fixpoint analysis
