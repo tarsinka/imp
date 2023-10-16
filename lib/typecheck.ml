@@ -27,7 +27,7 @@ let rec tp_expr e ty env =
       Printf.printf "Check function call of %s\n" fn;
       let fundef = Hashtbl.find_opt env.functions fn in
       match fundef with
-      | None -> tp_expr (DynCall(Var fn, args)) ty env
+      | None -> tp_expr (DynCall (Var fn, args)) ty env
       | Some def ->
           if List.length def.args <> List.length args then
             failwith
@@ -59,7 +59,9 @@ and te_expr e env =
       TArray ty
   | Var id -> (
       let typ = Hashtbl.find_opt env.typing id in
-      match typ with None -> failwith (Printf.sprintf "%s is an unknown variable" id) | Some t -> t)
+      match typ with
+      | None -> failwith (Printf.sprintf "%s is an unknown variable" id)
+      | Some t -> t)
   | BOP ((Add | Sub | Mul | Div | Mod | And | Or | Xor | Ror | Rol), e1, e2)
     -> (
       let tya = te_expr e1 env in
@@ -77,6 +79,17 @@ and te_expr e env =
   | Call (fn, _) ->
       let fundef = Hashtbl.find env.functions fn in
       fundef.return
+  | MCall (Var id, fname, _) -> (
+      let typ = Hashtbl.find env.typing id in
+      match typ with
+      | TStruct sct_name ->
+          let sct = Hashtbl.find env.structs sct_name in
+          List.fold_right
+            (fun (m : fun_def) t ->
+              if m.name = fname then m.return else t)
+            sct.methods TVoid
+      | _ -> failwith "Unknown structure!")
+  | MCall (_, _, _) -> TVoid
   | DynCall (e, _) -> te_expr (Deref e) env
   | Read m -> te_mem m env
   | NewArray (t, _) -> TArray t

@@ -2,7 +2,19 @@ var int a;
 
 struct pair
 {
-    int x; int y
+    var int x; 
+    var int y;
+
+    function void constructor(int a, int b)
+    {
+        x = a;
+        y = b;
+    }
+
+    function int sum()
+    {
+        return x + y;
+    }
 }
 
 function int main()
@@ -11,13 +23,13 @@ function int main()
     var char c;
 	var bool b;
 	var int* p;
-	var [char] str;
+	var int* func;
+    var [char] str;
     var [int] static_arr;
     var [int] dyn_arr;
     var pair n;
 
 	str = "Hello, World!";
-    print(str);
 
 	b = true;
     c = 'Z';
@@ -27,11 +39,20 @@ function int main()
     n.y = 98;
 
     x = square(n.x, n.y);
-
     p = &x;
 
     print_char(c);
     print_int(*(p));
+
+    x = n.sum();
+    print_char(c);
+    print_int(x);
+    print_char(c);
+
+    func = &square;
+    x = func(5, 8);
+
+    print_int(x);
 
     static_arr = [1, 2, 3, 4, 5];
     dyn_arr = new [int, 5];

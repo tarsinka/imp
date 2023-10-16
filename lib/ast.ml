@@ -41,6 +41,7 @@ type expr =
   | Ref of string
   | Deref of expr
   | Call of string * expr list
+  | MCall of expr * string * expr list
   | DynCall of expr * expr list
   | Read of mem
   | New of string
@@ -87,7 +88,7 @@ let get_field_offset sct field =
     | [] -> -1
     | (_, id) :: t -> if id = field then i else aux (i + 1) t
   in
-  aux 0 sct.fields
+  aux 1 sct.fields
 
 let sizeof_struct sct =
   (*

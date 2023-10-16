@@ -64,6 +64,7 @@ expr:
         | AND ; s = VARNAME { Ref s }
         | fname = VARNAME ; LPAR ; args=separated_list(COMMA, expr) ; RPAR { Call (fname, args) }
         | m=mem { Read m }
+        | e=expr ; DOT ; fname=VARNAME ; LPAR ; args=separated_list(COMMA, expr) ; RPAR { MCall(e, fname, args) }
         | NEW ; s = VARNAME { New s }
         | NEW ; LARRAY ; t=typ ; COMMA ; e=expr ; RARRAY { NewArray(t, e) }
         | x = expr ; op=binary_op ; y = expr { BOP (op, x, y) }

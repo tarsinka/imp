@@ -7,6 +7,7 @@ open Mips
 open Builtins
 open Format
 
+type function_kind = Function | Method
 type memory_mapper = Reg of register | Offset of int
 
 let tr_bop = function
@@ -31,7 +32,9 @@ let rec req_register = function
   | BOP (_, e1, e2) -> req_register e1 + req_register e2
   | _ -> 1
 
-let tr_function gl_env fdef =
+let desc_fmt sct_name = "__" ^ sct_name ^ "_"
+
+let rec tr_function gl_env fdef fun_kind =
   (*
   
     Here we instantiate the local hash table for the function.
@@ -50,13 +53,13 @@ let tr_function gl_env fdef =
     fdef.locals;
 
   List.iter (fun (t, id) -> Hashtbl.add gl_env.typing id t) fdef.locals;
+  List.iter (fun (t, id) -> Hashtbl.add gl_env.typing id t) fdef.args;
 
   let lc = ref (-1) in
   let label_fmt () =
     lc := !lc + 1;
     "__" ^ fdef.name ^ "_" ^ string_of_int !lc
   in
-
   let rec save_regs save fetch i ri regs =
     if i < ri then
       save_regs (save @@ push regs.(i)) (pop regs.(i) @@ fetch) (i + 1) ri regs
@@ -72,6 +75,8 @@ let tr_function gl_env fdef =
         match Hashtbl.find_opt env id with
         | Some (Offset os) -> lw t.(ri) os fp
         | Some (Reg rg) -> move t.(ri) rg
+        | None when fun_kind = Method ->
+            tr_expr ri (Read (Str (Var "__self__", id)))
         | None -> la t.(ri) id @@ lw t.(ri) 0 t.(ri))
     | Val ty -> (
         match ty with
@@ -123,8 +128,8 @@ let tr_function gl_env fdef =
         if alloc_b > alloc_a then op t.(ri) t.(ri + 1) t.(ri)
         else op t.(ri) t.(ri) t.(ri + 1)
     | Ref id -> (
-      Printf.printf "ref %s\n" id;  
-      match Hashtbl.find_opt env id with
+        Printf.printf "ref %s\n" id;
+        match Hashtbl.find_opt env id with
         | Some (Offset os) -> addi t.(ri) fp os
         | Some (Reg _) -> failwith "Bad memory access!"
         | None -> la t.(ri) id)
@@ -134,7 +139,6 @@ let tr_function gl_env fdef =
           Save common use registers on the stack 
           from the caller before calling given function.
         *)
-
         Printf.printf "Fun call %s\n" id;
 
         let call =
@@ -178,12 +182,34 @@ let tr_function gl_env fdef =
            aux 0 args @@ jal id @@ addi sp sp (4 * argc) *)
     | DynCall (e, args) ->
         let s, f = save_regs nop nop 0 ri t in
+        let args_asm = tr_args args in
         let func = tr_expr ri e in
-        s @@ func
+        s @@ args_asm @@ func
         @@ jalr t.(ri)
         @@ addi sp sp (4 * List.length args)
         @@ move t.(ri) t.(0)
         @@ f
+    | MCall (Var id, fname, args) -> (
+        let typ = Hashtbl.find gl_env.typing id in
+        match typ with
+        | TStruct sct_name ->
+            let sct = Hashtbl.find gl_env.structs sct_name in
+            let _, offset =
+              List.fold_right
+                (fun (m : fun_def) (it, off) ->
+                  if fname = m.name then (it + 1, it) else (it + 1, off))
+                sct.methods (0, 0)
+            in
+            tr_expr ri
+              (DynCall
+                 ( Deref
+                     (BOP
+                        ( Add,
+                          Var (desc_fmt sct_name),
+                          Val (Int (4 * (offset + 1))) )),
+                   Var id :: args ))
+        | _ -> failwith "Not a struct!")
+    | MCall (_, _, _) -> failwith "Unknown object!"
     | Alloc e ->
         tr_expr ri e @@ move a0 t.(ri) @@ li v0 9 @@ syscall @@ move t.(ri) v0
     | Read m -> tr_expr ri (Deref (tr_mem m))
@@ -208,11 +234,12 @@ let tr_function gl_env fdef =
   and tr_mem = function
     | Raw e -> e
     | Arr (source, offset) -> BOP (Add, source, BOP (Mul, Val (Int 4), offset))
-    | Str (Var id, field) ->
+    | Str (Var id, field) | Str (Deref (Var id), field) ->
         let t = Hashtbl.find gl_env.typing id in
         let def =
           match t with
-          | TStruct name -> Hashtbl.find gl_env.structs name
+          | TStruct name | TPointer (TStruct name) ->
+              Hashtbl.find gl_env.structs name
           | _ -> failwith "This is not a structure type!"
         in
         let offset = get_field_offset def field in
@@ -228,10 +255,15 @@ let tr_function gl_env fdef =
   and tr_stm = function
     | Assign ld -> (
         let id, e = ld.cnt in
+        tr_expr 0 e
+        @@
         match Hashtbl.find_opt env id with
-        | Some (Offset os) -> tr_expr 0 e @@ sw t0 os fp
-        | Some (Reg rg) -> tr_expr 0 e @@ move rg t0
-        | None -> la t1 id @@ sw t1 0 t0)
+        | Some (Offset os) -> sw t0 os fp
+        | Some (Reg rg) -> move rg t0
+        | None when fun_kind = Method ->
+            tr_stm
+              (Write { cnt = (Str (Deref (Var "__self__"), id), e); l = ld.l })
+        | None -> la t1 id @@ sw t0 0 t1)
     | If (ld, s1, s2) ->
         let then_label = label_fmt () in
         let end_label = label_fmt () in
@@ -250,40 +282,62 @@ let tr_function gl_env fdef =
         let d, e = ld.cnt in
         tr_expr 0 (tr_mem d) @@ tr_expr 1 e @@ sw t1 0 t0
   in
-  push fp @@ push ra @@ addi fp sp 4
+  let tr_struct_methods sct =
+    let desc_name = desc_fmt sct.name in
+
+    (*
+       Then it generates the assemly code of all of the
+       methods intern to the struct and get their address.
+     *)
+    Hashtbl.add gl_env.typing desc_name (TPointer TInt);
+    List.fold_right
+        (fun (me : fun_def) code ->
+          let sname = sct.name ^ "_" ^ me.name in
+          Hashtbl.add gl_env.functions sname me;
+          tr_function gl_env
+            {
+              me with
+              name = sname;
+              args = (TPointer (TStruct sct.name), "__self__") :: me.args;
+            }
+            Method
+          @@ code)
+        sct.methods nop
+        in
+  let tr_struct sct =
+    let desc_size = 4 * (List.length sct.methods + 1) in
+    let desc_name = desc_fmt sct.name in
+    let assign =
+      Assign { cnt = (desc_name, Alloc (Val (Int desc_size))); l = -1 }
+    in
+    let parent = Write { cnt = (Raw (Var desc_name), Val (Int 0)); l = -1 } in
+    let _, desc =
+      List.fold_right
+        (fun (m : fun_def) (i, code) ->
+          ( i + 1,
+            tr_stm
+              (Write
+                 {
+                   cnt =
+                     ( Raw (BOP (Add, Var desc_name, Val (Int (i * 4)))),
+                       Ref (sct.name ^ "_" ^ m.name) );
+                   l = -1;
+                 })
+            @@ code ))
+        sct.methods (1, nop)
+    in
+    tr_stm assign @@ tr_stm parent @@ desc
+  in
+  let desc_asm =
+    if fdef.name = "main" then
+      Hashtbl.fold (fun _ v code -> tr_struct_methods v @@ code) gl_env.structs nop
+      @@ label "main"
+      @@ Hashtbl.fold (fun _ v code -> tr_struct v @@ code) gl_env.structs nop
+    else label fdef.name
+  in
+  desc_asm @@ push fp @@ push ra @@ addi fp sp 4
   @@ subi sp sp (4 * List.length fdef.locals)
   @@ tr_seq fdef.code @@ li t0 0 @@ subi sp fp 4 @@ pop ra @@ pop fp @@ jr ra
-
-(* let tr_struct sct =
-   let desc_size = 4 * (List.length sct.methods + 1) in
-   let desc_name = "__" ^ sct.name ^ "_" in
-
-   (*
-     Then it generates the assemly code of all of the
-     methods intern to the struct and get their address.
-   *)
-
-   let assign =
-     Assign { cnt = (desc_name, Alloc (Val (Int desc_size))); l = -1 }
-   in
-   let parent = Write { cnt = (Raw (Var desc_name), Val (Int 0)); l = -1 } in
-   let desc =
-     List.fold_right
-       (fun m (i, code) ->
-         ( i + 1,
-           code
-           @@ tr_stm
-                (Write
-                   {
-                     cnt =
-                       ( Raw (BOP (Add, Var desc_name, Val (Int (i * 4)))),
-                         Ref m.name );
-                     l = -1;
-                   })
-                0 ))
-       sct.methods (1, nop)
-   in
-   tr_stm assign @@ tr_stm parent @@ desc *)
 
 (*
   The head sequence is the very first sequence.
@@ -305,7 +359,9 @@ module Translator = struct
     *)
     let type_env = Hashtbl.create 16 in
     List.iter (fun (t, id) -> Hashtbl.add type_env id t) prog.globals;
-    List.iter (fun (f : fun_def) -> Hashtbl.add type_env f.name f.return) prog.functions;
+    List.iter
+      (fun (f : fun_def) -> Hashtbl.add type_env f.name f.return)
+      prog.functions;
 
     let function_env = Hashtbl.create 16 in
     List.iter
@@ -313,10 +369,14 @@ module Translator = struct
       (__builtin_print_char_def :: __builtin_print_int_def :: prog.functions);
 
     let struct_env = Hashtbl.create 16 in
-    List.iter
-      (fun (s : struct_def) -> Hashtbl.add struct_env s.name s)
-      prog.structs;
-
+    let globals =
+      List.fold_right
+        (fun (s : struct_def) gl ->
+          Hashtbl.add struct_env s.name s;
+          let dn = desc_fmt s.name in
+          (TVoid, dn) :: gl)
+        prog.structs prog.globals
+    in
     let env =
       { typing = type_env; functions = function_env; structs = struct_env }
     in
@@ -336,7 +396,7 @@ module Translator = struct
           let analysis = dataflow s in
           print_analysis analysis;
           (* let chailin = reg_dist analysis 0 in
-          Hashtbl.iter (fun k v -> Printf.printf "%s -> %d\n" k v) chailin; *)
+             Hashtbl.iter (fun k v -> Printf.printf "%s -> %d\n" k v) chailin; *)
           let rd = deadcode_reduction s [] analysis in
           Printf.printf "%s\n" (show_seq rd);
           { f with code = rd } :: l)
@@ -346,15 +406,14 @@ module Translator = struct
 
     let fn_asm =
       List.fold_right
-        (fun (def : Ast.fun_def) code ->
-          label def.name @@ tr_function env def @@ code)
+        (fun (def : Ast.fun_def) code -> tr_function env def Function @@ code)
         prog.functions nop
     in
     let text = head @@ fn_asm @@ __builtin_print_int @@ __builtin_print_char in
     let data =
       List.fold_right
         (fun (_, id) code -> label id @@ dword [ 0 ] @@ code)
-        prog.globals nop
+        globals nop
     in
     let prog = { text; data } in
     let output_fn = Filename.chop_suffix f ".imp" ^ ".asm" in
