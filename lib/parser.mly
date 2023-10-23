@@ -19,10 +19,10 @@
 %token ADD SUB MUL DIV MOD
 %token AND OR XOR ROL ROR
 %token LT LE GT GE EQ NE
-%token NEW 
+%token NEW
 
 %token ASSIGN IF ELSE WHILE RETURN
-%token SEMI_COL BEGIN END LPAR RPAR LARRAY RARRAY COMMA DOT
+%token COLUMN SEMI_COL BEGIN END LPAR RPAR LARRAY RARRAY COMMA DOT
 
 (* Types *)
 
@@ -65,7 +65,7 @@ expr:
         | fname = VARNAME ; LPAR ; args=separated_list(COMMA, expr) ; RPAR { Call (fname, args) }
         | m=mem { Read m }
         | e=expr ; DOT ; fname=VARNAME ; LPAR ; args=separated_list(COMMA, expr) ; RPAR { MCall(e, fname, args) }
-        | NEW ; s = VARNAME { New s }
+        | NEW ; s = VARNAME ; LPAR ; args=separated_list(COMMA, expr) ; RPAR { New (s, args) }
         | NEW ; LARRAY ; t=typ ; COMMA ; e=expr ; RARRAY { NewArray(t, e) }
         | x = expr ; op=binary_op ; y = expr { BOP (op, x, y) }
         
@@ -93,7 +93,8 @@ functions:
         BEGIN ; locals=list(vars) ; seq=list(stm) ; END { { name=name ; args=args ; code=seq ; locals=locals ; return=t } }
 
 structs:
-        STRUCT ; name = VARNAME ; BEGIN ; v=list(vars) ; methods=list(functions) ; END { { name=name ; fields=v ; methods } }
+        STRUCT ; name = VARNAME ; parent = option(COLUMN ; p = VARNAME { p }) ; 
+        BEGIN ; fields=list(vars) ; methods=list(functions) ; END { { name ; fields ; methods ; parent } }
 
 typ:
         | TY_VOID       { TVoid }

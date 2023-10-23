@@ -7,13 +7,23 @@ struct pair
 
     function void constructor(int a, int b)
     {
-        x = a;
+        x = 2 * a;
         y = b;
     }
 
     function int sum()
     {
         return x + y;
+    }
+}
+
+struct coordinate : pair
+{
+    var int polar;
+
+    function void constructor(int p)
+    {
+        polar = p;
     }
 }
 
@@ -28,15 +38,20 @@ function int main()
     var [int] static_arr;
     var [int] dyn_arr;
     var pair n;
+    var coordinate co;
 
 	str = "Hello, World!";
 
 	b = true;
     c = 'Z';
 	
-    n = new pair;
-    n.x = 77;
-    n.y = 98;
+    co = new coordinate(1);
+    co.x = 8;
+    print_int(co.polar);
+    print_int(co.x);
+
+    n = new pair(5, 6);
+    n.x = 7;
 
     x = square(n.x, n.y);
     p = &x;

@@ -194,12 +194,7 @@ let rec tr_function gl_env fdef fun_kind =
         match typ with
         | TStruct sct_name ->
             let sct = Hashtbl.find gl_env.structs sct_name in
-            let _, offset =
-              List.fold_right
-                (fun (m : fun_def) (it, off) ->
-                  if fname = m.name then (it + 1, it) else (it + 1, off))
-                sct.methods (0, 0)
-            in
+            let offset = get_sct_method_offset sct fname in
             tr_expr ri
               (DynCall
                  ( Deref
@@ -213,10 +208,24 @@ let rec tr_function gl_env fdef fun_kind =
     | Alloc e ->
         tr_expr ri e @@ move a0 t.(ri) @@ li v0 9 @@ syscall @@ move t.(ri) v0
     | Read m -> tr_expr ri (Deref (tr_mem m))
-    | New name ->
-        let sct = Hashtbl.find gl_env.structs name in
-        let size = sizeof_struct sct in
+    | New (name, args) ->
+        let size = 4 + sizeof_struct name gl_env.structs in
+        Printf.printf "allocated struct %s size : %d\n" name size;
+
+        (*
+          To call the constructor and other methods
+          within the expr, we assign a temporary name
+          to our register.   
+        *)
+        let var = "__var_" ^ name ^ "__" in
+
+        Hashtbl.add env var (Reg t.(ri));
+        Hashtbl.add gl_env.typing var (TStruct name);
+
         tr_expr ri (Alloc (Val (Int size)))
+        @@ la t.(ri + 1) (desc_fmt name)
+        @@ sw t.(ri + 1) 0 t.(ri)
+        @@ tr_expr (ri + 1) (MCall (Var var, "constructor", args))
     | NewArray (_, e) -> tr_expr ri (Alloc e)
   (*
         To access memory, we are using the Read expression.
@@ -238,11 +247,10 @@ let rec tr_function gl_env fdef fun_kind =
         let t = Hashtbl.find gl_env.typing id in
         let def =
           match t with
-          | TStruct name | TPointer (TStruct name) ->
-              Hashtbl.find gl_env.structs name
+          | TStruct name | TPointer (TStruct name) -> name
           | _ -> failwith "This is not a structure type!"
         in
-        let offset = get_field_offset def field in
+        let offset = get_field_offset def field gl_env.structs in
         tr_mem (Arr (Var id, Val (Int offset)))
     | Str (Read m, _) -> tr_mem m
     | _ -> failwith "Illegal operation!"
@@ -289,21 +297,22 @@ let rec tr_function gl_env fdef fun_kind =
        Then it generates the assemly code of all of the
        methods intern to the struct and get their address.
      *)
+
     Hashtbl.add gl_env.typing desc_name (TPointer TInt);
     List.fold_right
-        (fun (me : fun_def) code ->
-          let sname = sct.name ^ "_" ^ me.name in
-          Hashtbl.add gl_env.functions sname me;
-          tr_function gl_env
-            {
-              me with
-              name = sname;
-              args = (TPointer (TStruct sct.name), "__self__") :: me.args;
-            }
-            Method
-          @@ code)
-        sct.methods nop
-        in
+      (fun (me : fun_def) code ->
+        let sname = sct.name ^ "_" ^ me.name in
+        Hashtbl.add gl_env.functions sname me;
+        tr_function gl_env
+          {
+            me with
+            name = sname;
+            args = (TPointer (TStruct sct.name), "__self__") :: me.args;
+          }
+          Method
+        @@ code)
+      sct.methods nop
+  in
   let tr_struct sct =
     let desc_size = 4 * (List.length sct.methods + 1) in
     let desc_name = desc_fmt sct.name in
@@ -330,7 +339,9 @@ let rec tr_function gl_env fdef fun_kind =
   in
   let desc_asm =
     if fdef.name = "main" then
-      Hashtbl.fold (fun _ v code -> tr_struct_methods v @@ code) gl_env.structs nop
+      Hashtbl.fold
+        (fun _ v code -> tr_struct_methods v @@ code)
+        gl_env.structs nop
       @@ label "main"
       @@ Hashtbl.fold (fun _ v code -> tr_struct v @@ code) gl_env.structs nop
     else label fdef.name
@@ -388,13 +399,13 @@ module Translator = struct
         if wc then () else failwith "Typecheck error!")
       prog.functions;
 
-    let _ =
+    let opt_funcs =
       List.fold_right
         (fun f l ->
           let s = f.code in
           Printf.printf "%s\n" (show_seq s);
           let analysis = dataflow s in
-          print_analysis analysis;
+          (* print_analysis analysis; *)
           (* let chailin = reg_dist analysis 0 in
              Hashtbl.iter (fun k v -> Printf.printf "%s -> %d\n" k v) chailin; *)
           let rd = deadcode_reduction s [] analysis in
@@ -407,7 +418,7 @@ module Translator = struct
     let fn_asm =
       List.fold_right
         (fun (def : Ast.fun_def) code -> tr_function env def Function @@ code)
-        prog.functions nop
+        opt_funcs nop
     in
     let text = head @@ fn_asm @@ __builtin_print_int @@ __builtin_print_char in
     let data =

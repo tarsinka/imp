@@ -111,8 +111,8 @@ let la x (a : label) = ins "la %s, %s" x a
 let lbu x i r = ins "lbu %s, %i(%s)" x i r
 let lw x i r = ins "lw %s, %i(%s)" x i r
 let sw x i r = ins "sw %s, %i(%s)" x i r
-let move r1 r2 = ins "move %s, %s" r1 r2
 let nop = Nop
+let move r1 r2 = if r1 = r2 then nop else ins "move %s, %s" r1 r2
 let label (s : label) = S (s ^ ":\n")
 let syscall = S "\tsyscall\n"
 let comment s = S ("#" ^ s ^ "\n")

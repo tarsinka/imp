@@ -72,7 +72,7 @@ and te_expr e env =
   | Ref id ->
       let t = Hashtbl.find env.typing id in
       TPointer t
-  | New id -> TStruct id
+  | New (id, _) -> TStruct id
   | Deref e -> (
       let t = te_expr e env in
       match t with TPointer a -> a | _ -> TVoid)
@@ -85,8 +85,7 @@ and te_expr e env =
       | TStruct sct_name ->
           let sct = Hashtbl.find env.structs sct_name in
           List.fold_right
-            (fun (m : fun_def) t ->
-              if m.name = fname then m.return else t)
+            (fun (m : fun_def) t -> if m.name = fname then m.return else t)
             sct.methods TVoid
       | _ -> failwith "Unknown structure!")
   | MCall (_, _, _) -> TVoid
@@ -109,11 +108,18 @@ and te_mem m env =
       match sctopt with
       | Some (TStruct sname) ->
           let sct = Hashtbl.find env.structs sname in
+          let parent_fields =
+            match sct.parent with
+            | Some p ->
+                let parent_sct = Hashtbl.find env.structs p in
+                parent_sct.fields
+            | None -> []
+          in
           let rec help = function
             | [] -> TVoid
             | (ty, s) :: t -> if s = fd then ty else help t
           in
-          help sct.fields
+          help (sct.fields @ parent_fields)
       | _ -> failwith "This is not a structure!")
   | Str (Read m, _) -> te_mem m env
   | _ -> failwith "Semantic error!"

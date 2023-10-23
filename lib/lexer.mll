@@ -31,6 +31,7 @@ rule token = parse
         | ">="          { GE }
         | "=="          { EQ }
         | '='           { ASSIGN }
+        | ':'           { COLUMN }
         | ';'           { SEMI_COL }
         | ','           { COMMA }
         | '.'           { DOT }

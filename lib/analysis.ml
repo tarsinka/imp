@@ -24,7 +24,8 @@ let rec vars = function
   | BOP (_, e1, e2) -> VarSet.union (vars e1) (vars e2)
   | Deref e | Alloc e -> vars e
   | Ref v -> VarSet.singleton v
-  | Call (_, args) | DynCall (_, args) | MCall (_, _, args) ->
+  | Call (fn, args) -> VarSet.add fn (vars (DynCall(Var fn, args))) 
+  | DynCall (_, args) | MCall (_, _, args) ->
       List.fold_right (fun e set -> VarSet.union (vars e) set) args VarSet.empty
   | Read m -> vars_mem m
 
