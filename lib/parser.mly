@@ -95,8 +95,8 @@ functions:
         BEGIN ; locals=list(vars) ; seq=list(stm) ; END { { name=name ; args=args ; code=seq ; locals=locals ; return=t } }
 
 structs:
-        STRUCT ; name = VARNAME ; parent = option(COLUMN ; p = VARNAME { p }) ; 
-        BEGIN ; fields=list(vars) ; methods=list(functions) ; END { { name ; fields ; methods ; parent ; is_abstract = false } }
+        is_abstract = option(ABSTRACT) ; STRUCT ; name = VARNAME ; parent = option(COLUMN ; p = VARNAME { p }) ; 
+        BEGIN ; fields=list(vars) ; methods=list(functions) ; END { { name ; fields ; methods ; parent ; is_abstract = (Option.is_some is_abstract) } }
 
 typ:
         | TY_VOID       { TVoid }

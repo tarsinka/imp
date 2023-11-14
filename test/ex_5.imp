@@ -1,0 +1,59 @@
+abstract struct algebraic_structure
+{
+    var char set;
+    var char law;
+}
+
+struct monoid : algebraic_structure 
+{
+    var int id;
+
+    function void constructor(char s, char l, int e)
+    {
+        set = s;
+        law = l;
+        id = e;
+    }
+}
+
+struct group : monoid
+{
+    var bool commutative;
+
+    function void constructor(char s, char l, int e, bool comm)
+    {
+        constructor(s, l, e);
+        commutative = comm;
+    }
+}
+
+function int main()
+{
+    var monoid m;
+    var group g;
+    var algebraic_structure as;
+    var bool b;
+
+    m = new monoid('N', '+', 0);
+    print_int(m.id);
+    print_char(m.set);
+
+    as = new monoid('Q', '*', 1);
+    print_char(as.set);
+
+    g = new group('Z', '+', 0, true);
+    print_char(g.set);
+
+    b = m instanceof group;
+
+    if b == true
+    {
+        print_int(42);
+    }
+    else
+    {
+        print_int(43);
+    }
+
+    return g.id;
+}

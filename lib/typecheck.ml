@@ -6,6 +6,17 @@ type env = {
   structs : (string, struct_def) Hashtbl.t;
 }
 
+let rec field_exists sct fd env =
+  let fopt = List.find_opt (fun (_, f) -> fd = f) sct.fields in
+  match fopt with
+  | Some (t, _) -> t
+  | None -> (
+      match sct.parent with
+      | Some ps ->
+          let prt = Hashtbl.find env.structs ps in
+          field_exists prt fd env
+      | None -> TVoid)
+
 let int_reduction = function
   | TPointer t -> TPointer t
   | TChar -> TChar
@@ -53,12 +64,20 @@ let rec te_expr e env =
   | Ref id ->
       let t = Hashtbl.find env.typing id in
       TPointer t
-  | New (id, _) -> TStruct id
+  | New (id, _) ->
+      (*
+        Checks whether the struct is abstract
+        or not.   
+      *)
+      let sct = Hashtbl.find env.structs id in
+      if not sct.is_abstract then TStruct id
+      else
+        failwith (Printf.sprintf "The structure %s is defined as abstract" id)
   | Deref e -> (
       let t = te_expr e env in
       match t with TPointer a -> a | _ -> TVoid)
   | Call (fn, args) -> (
-      Printf.printf "Check function call of %s\n" fn;
+      (* Printf.printf "Check function call of %s\n" fn; *)
       let fundef = Hashtbl.find_opt env.functions fn in
       match fundef with
       | None -> te_expr (DynCall (Var fn, args)) env
@@ -109,21 +128,11 @@ and te_mem m env =
       match sctopt with
       | Some (TStruct sname) ->
           let sct = Hashtbl.find env.structs sname in
-          let parent_fields =
-            match sct.parent with
-            | Some p ->
-                let parent_sct = Hashtbl.find env.structs p in
-                parent_sct.fields
-            | None -> []
-          in
-          let rec help = function
-            | [] ->
-                failwith
-                  (Printf.sprintf "Field %s isn't a member of structure %s" fd
-                     sname)
-            | (ty, s) :: t -> if s = fd then ty else help t
-          in
-          help (sct.fields @ parent_fields)
+          let ty = field_exists sct fd env in
+          if ty <> TVoid then ty
+          else
+            failwith
+              (Printf.sprintf "Field %s does not belong to class %s" fd sname)
       | _ -> failwith "This is not of a known structure type")
   | Str (Read m, _) -> te_mem m env
   | _ -> failwith "Semantic error"
@@ -157,6 +166,15 @@ let tpt_expr e env =
             (Printf.sprintf "%s is not defined as an object" (show_expr e)))
   | _ -> e
 
+let rec inheritance_hierarchy chd trg env =
+  let b = chd.name <> trg.name in
+  match chd.parent with
+  | Some ps when b && ps = trg.name -> true
+  | Some ps when b && ps <> trg.name ->
+      let prt = Hashtbl.find env.structs ps in
+      inheritance_hierarchy prt trg env
+  | Some _ | None -> chd.name = trg.name
+
 (*
   tpt_stm checks whether a statement is well typed
   or not and eventually returns a type-indicationless
@@ -164,14 +182,30 @@ let tpt_expr e env =
 *)
 
 let rec tpt_stm fn s env =
-  Printf.printf "%s\n" (show_stm s);
   match s with
-  | Assign ld ->
+  | Assign ld -> (
       let id, e = ld.cnt in
       let e' = tpt_expr e env in
       let t_var = Hashtbl.find env.typing id in
       let t_exp = te_expr e' env in
-      if t_var = t_exp then Assign { ld with cnt = (id, e') } else failwith ""
+      match (t_var, t_exp) with
+      | TStruct sn, TStruct sm ->
+          (*
+            If the types are classes, we make
+            sure the cast (if there is one) is
+            correct.   
+          *)
+          let chd = Hashtbl.find env.structs sm in
+          let trg = Hashtbl.find env.structs sn in
+          if inheritance_hierarchy chd trg env then
+            Assign { ld with cnt = (id, e') }
+          else
+            failwith
+              (Printf.sprintf "Class %s is not a child class of %s" sn sm)
+      | _ when t_var = t_exp -> Assign { ld with cnt = (id, e') }
+      | _ ->
+          failwith
+            (Printf.sprintf "The assignation %s isn't well typed" (show_stm s)))
   | If (ld, s1, s2) ->
       let guard = tpt_expr ld.cnt env in
       let t_guard = te_expr guard env in

@@ -93,39 +93,41 @@ type struct_def = {
   fields : (typ * string) list;
   methods : fun_def list;
   parent : string option;
-  is_abstract : bool
+  is_abstract : bool;
 }
 
-let get_field_offset sct_name field env =
+let rec get_field_offset sct_name field offset env =
   let sct = Hashtbl.find env sct_name in
-  let fields =
+  let pfs, os =
     match sct.parent with
-    | Some p ->
-        let p_sct = Hashtbl.find env p in
-        List.fold_right List.cons p_sct.fields sct.fields
-    | None -> sct.fields
+    | Some ps ->
+        let prt = Hashtbl.find env ps in
+        (List.length prt.fields, get_field_offset ps field offset env)
+    | None -> (0, -1)
   in
   let rec aux i = function
     | [] -> -1
     | (_, id) :: t -> if id = field then i else aux (i + 1) t
   in
-  aux 1 fields
+  if os = -1 then aux (pfs + offset) sct.fields else os
 
-let get_sct_method_offset sct fname args_type =
+let rec get_sct_method_offset sct_name fname args_type env =
   let args_type_cmp a =
     if List.length a = List.length args_type then
       List.fold_right2 (fun (x, _) y b -> x = y && b) a args_type true
     else false
   in
-
-  let _, offset =
-    List.fold_right
-      (fun (m : fun_def) (it, off) ->
-        if fname = m.name && args_type_cmp m.args then (it + 1, it)
-        else (it + 1, off))
-      sct.methods (0, -1)
+  let sct = Hashtbl.find env sct_name in
+  let rec aux i = function
+    | [] -> (
+        match sct.parent with
+        | Some ps -> get_sct_method_offset ps fname args_type env
+        | None -> (sct_name, -1))
+    | (m : fun_def) :: t ->
+        if m.name = fname && args_type_cmp m.args then (sct_name, i)
+        else aux (i + 1) t
   in
-  offset
+  aux 0 sct.methods
 
 let rec sizeof_struct sct_name env =
   (*

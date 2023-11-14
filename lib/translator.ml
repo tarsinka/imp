@@ -75,9 +75,15 @@ let rec tr_function gl_env fdef fun_kind =
         match Hashtbl.find_opt env id with
         | Some (Offset os) -> lw t.(ri) os fp
         | Some (Reg rg) -> move t.(ri) rg
-        | None when fun_kind = Method ->
-            tr_expr ri (Read (Str (Var "__self__", id)))
-        | None -> la t.(ri) id @@ lw t.(ri) 0 t.(ri))
+        | None -> (
+            match Hashtbl.find_opt gl_env.typing id with
+            | Some _ -> la t.(ri) id @@ lw t.(ri) 0 t.(ri)
+            | None when fun_kind = Method ->
+                tr_expr ri (Read (Str (Var "__self__", id)))
+            | None ->
+                failwith
+                  (Printf.sprintf "Variable %s does not belong to the program"
+                     id)))
     | Val ty -> (
         match ty with
         | Int i -> li t.(ri) i
@@ -145,6 +151,8 @@ let rec tr_function gl_env fdef fun_kind =
         | Some (Reg _) -> failwith "Bad memory access!"
         | None -> la t.(ri) id)
     | Deref e -> tr_expr ri e @@ lw t.(ri) 0 t.(ri)
+    | Call (fn, args) when fun_kind = Method ->
+        tr_expr ri (MCall (Deref (Var "__self__"), fn, args))
     | Call (id, args) ->
         (*
           Save common use registers on the stack 
@@ -200,38 +208,42 @@ let rec tr_function gl_env fdef fun_kind =
         @@ addi sp sp (4 * List.length args)
         @@ move t.(ri) t.(0)
         @@ f
-    | MCall (Var id, fname, args) -> (
+    | MCall ((Var id | Deref (Var id)), fname, args) -> (
         (*
       We look for the method either in the structure or
       in its parent, in case we didn't find it. This implies
       the overrinding.   
     *)
         let typ = Hashtbl.find gl_env.typing id in
+        Printf.printf "%s.%s\n" (show_typ typ) fname;
         match typ with
-        | TStruct sct_name ->
-            let sct = Hashtbl.find gl_env.structs sct_name in
-
+        | TStruct sct_name | TPointer (TStruct sct_name) ->
+            (* let sct = Hashtbl.find gl_env.structs sct_name in *)
             (*
               Evaluates the type of each argument   
             *)
-
-            let args_type = List.fold_right (fun a li -> te_expr a gl_env :: li) args [] in
-
-            let local_offset = get_sct_method_offset sct fname args_type in
-            let nm, os =
-              match sct.parent with
-              | Some s ->
-                  if local_offset = -1 then
-                    let prt = Hashtbl.find gl_env.structs s in
-                    (s, get_sct_method_offset prt fname args_type)
-                  else (sct_name, local_offset)
-              | _ when local_offset = -1 ->
-                  failwith
-                    (Printf.sprintf
-                       "Methods %s does not belong to %s nor its parent" fname
-                       id)
-              | _ -> (sct_name, local_offset)
+            let args_type =
+              List.fold_right (fun a li -> te_expr a gl_env :: li) args []
             in
+
+            let nm, os =
+              get_sct_method_offset sct_name fname args_type gl_env.structs
+            in
+            (* let nm, os =
+                 match sct.parent with
+                 | Some s ->
+                     if local_offset = -1 then
+                       let prt = Hashtbl.find gl_env.structs s in
+                       (s, get_sct_method_offset prt fname args_type)
+                     else (sct_name, local_offset)
+                 | _ when local_offset = -1 ->
+                     failwith
+                       (Printf.sprintf
+                          "Methods %s does not belong to %s nor its parent" fname
+                          id)
+                 | _ -> (sct_name, local_offset)
+               in *)
+            Printf.printf "Offset of method %s is %d from %s\n" fname os nm;
             tr_expr ri
               (DynCall
                  ( Deref (BOP (Add, Var (desc_fmt nm), Val (Int (4 * (os + 1))))),
@@ -274,7 +286,10 @@ let rec tr_function gl_env fdef fun_kind =
         @@ sw t.(ri + 1) 4 t.(ri)
         @@ tr_expr (ri + 1) (MCall (Var var, "constructor", args))
     | NewArray (_, e) -> tr_expr ri (Alloc e)
-    | _ -> failwith "Unknown expression kind, maybe the typing or analysis process got wrong?"
+    | _ ->
+        failwith
+          "Unknown expression kind, maybe the typing or analysis process got \
+           wrong?"
   (*
         To access memory, we are using the Read expression.
         We assume we can access memory with three different ways :
@@ -298,7 +313,8 @@ let rec tr_function gl_env fdef fun_kind =
           | TStruct name | TPointer (TStruct name) -> name
           | _ -> failwith "This is not a structure type!"
         in
-        let offset = get_field_offset def field gl_env.structs in
+        let offset = get_field_offset def field 1 gl_env.structs in
+        Printf.printf "Offset of %s.%s is %d\n" def field offset;
         tr_mem (Arr (Var id, Val (Int offset)))
     | Str (Read m, _) -> tr_mem m
     | _ -> failwith "Illegal operation!"
@@ -338,9 +354,12 @@ let rec tr_function gl_env fdef fun_kind =
         let d, e = ld.cnt in
         tr_expr 0 (tr_mem d) @@ tr_expr 1 e @@ sw t1 0 t0
   in
-  let method_fmt sn (m: fun_def) = 
-    let args_fmt = List.fold_right (fun (arg_t, _) str -> (hash_type arg_t) ^ str) m.args "" in
-    sn ^ "_" ^ m.name ^ "_" ^ args_fmt in
+  let method_fmt sn (m : fun_def) =
+    let args_fmt =
+      List.fold_right (fun (arg_t, _) str -> hash_type arg_t ^ str) m.args ""
+    in
+    sn ^ "_" ^ m.name ^ "_" ^ args_fmt
+  in
   let tr_struct_methods sct =
     let desc_name = desc_fmt sct.name in
 
@@ -422,31 +441,6 @@ module Translator = struct
       to do, producing a new AST which will be sent
       to the translating process.
     *)
-    let type_env = Hashtbl.create 16 in
-    List.iter (fun (t, id) -> Hashtbl.add type_env id t) prog.globals;
-    List.iter
-      (fun (f : fun_def) -> Hashtbl.add type_env f.name f.return)
-      prog.functions;
-
-    let function_env = Hashtbl.create 16 in
-    List.iter
-      (fun (f : fun_def) -> Hashtbl.add function_env f.name f)
-      (__builtin_print_char_def :: __builtin_print_int_def :: prog.functions);
-
-    (*
-      Altering structs such that they contain
-      super pointer to their parent   
-    *)
-
-    (* let structs =
-         List.fold_right
-           (fun (s : struct_def) sts ->
-             let parent_type =
-               match s.parent with Some ps -> TStruct ps | None -> TVoid
-             in
-             { s with fields = (parent_type, "super") :: s.fields } :: sts)
-           prog.structs []
-       in *)
     let struct_env = Hashtbl.create 16 in
     let globals =
       List.fold_right
@@ -456,30 +450,45 @@ module Translator = struct
           (TVoid, dn) :: gl)
         prog.structs prog.globals
     in
+    let type_env = Hashtbl.create 16 in
+    List.iter (fun (t, id) -> Hashtbl.add type_env id t) globals;
+    List.iter
+      (fun (f : fun_def) -> Hashtbl.add type_env f.name f.return)
+      prog.functions;
+
+    let function_env = Hashtbl.create 16 in
+    List.iter
+      (fun (f : fun_def) -> Hashtbl.add function_env f.name f)
+      (__builtin_print_char_def :: __builtin_print_int_def :: prog.functions);
+
     let env =
       { typing = type_env; functions = function_env; structs = struct_env }
     in
 
-    Printf.printf "Type-check the code\n";
-    (* List.iter
-      (fun (f : fun_def) ->
-        let wc = tp_fun f env in
-        if wc then () else failwith "Typecheck error!")
-      prog.functions; *)
+    Printf.printf "[i] type-checking the imp code\n";
 
-    let functions = List.fold_right (fun (f: fun_def) fl -> (tpt_fun f env) :: fl) prog.functions [] in
+    (* List.iter
+       (fun (f : fun_def) ->
+         let wc = tp_fun f env in
+         if wc then () else failwith "Typecheck error!")
+       prog.functions; *)
+    let functions =
+      List.fold_right
+        (fun (f : fun_def) fl -> tpt_fun f env :: fl)
+        prog.functions []
+    in
 
     let opt_funcs =
       List.fold_right
         (fun f l ->
           let s = f.code in
-          Printf.printf "%s\n" (show_seq s);
+          (* Printf.printf "%s\n" (show_seq s); *)
           let analysis = dataflow s in
           (* print_analysis analysis; *)
           (* let chailin = reg_dist analysis 0 in
              Hashtbl.iter (fun k v -> Printf.printf "%s -> %d\n" k v) chailin; *)
           let rd = deadcode_reduction s [] analysis in
-          Printf.printf "%s\n" (show_seq rd);
+          (* Printf.printf "%s\n" (show_seq rd); *)
           { f with code = rd } :: l)
         functions []
     in
