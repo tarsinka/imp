@@ -12,37 +12,10 @@ let int_reduction = function
   | _ -> TInt
 
 (*
-  Type-check of an expression   
+  Type information for a given expression
 *)
 
-let rec tp_expr e ty env =
-  match e with
-  | BOP (_, e1, e2) ->
-      let tya = int_reduction (te_expr e1 env) in
-      let tyb = int_reduction (te_expr e2 env) in
-      tp_expr e1 tya env && tp_expr e2 tyb env
-  | Alloc e -> tp_expr e TInt env
-  | Deref e -> tp_expr e (TPointer TVoid) env
-  | Call (fn, args) -> (
-      Printf.printf "Check function call of %s\n" fn;
-      let fundef = Hashtbl.find_opt env.functions fn in
-      match fundef with
-      | None -> tp_expr (DynCall (Var fn, args)) ty env
-      | Some def ->
-          if List.length def.args <> List.length args then
-            failwith
-              (Printf.sprintf "Function %s has too few/many arguments!\n" fn)
-          else
-            List.fold_right2
-              (fun e (t, _) b -> tp_expr e t env && b)
-              args def.args true)
-  | _ -> te_expr e env = ty
-
-(*
-  Type information of an expression
-*)
-
-and te_expr e env =
+let rec te_expr e env =
   match e with
   | Val (Int _) -> TInt
   | Val (Char _) -> TChar
@@ -53,7 +26,8 @@ and te_expr e env =
         List.fold_right
           (fun e p ->
             let tye = te_expr e env in
-            if p = TVoid || tye = p then tye else failwith "")
+            if p = TVoid || tye = p then tye
+            else failwith "Array not well typed")
           l TVoid
       in
       TArray ty
@@ -68,6 +42,13 @@ and te_expr e env =
       let tyb = te_expr e2 env in
       match (tya, tyb) with TPointer a, TPointer _ -> TPointer a | _ -> TInt)
   | BOP ((Le | Lt | Ge | Gt | Eq | Ne), _, _) -> TBool
+  | InstanceOf (strc, _) -> (
+      let v = te_expr strc env in
+      match v with
+      | TStruct _ -> TBool
+      | _ ->
+          failwith
+            (Printf.sprintf "%s is not defined as an object" (show_expr strc)))
   | Alloc _ -> TPointer TVoid
   | Ref id ->
       let t = Hashtbl.find env.typing id in
@@ -76,18 +57,38 @@ and te_expr e env =
   | Deref e -> (
       let t = te_expr e env in
       match t with TPointer a -> a | _ -> TVoid)
-  | Call (fn, _) ->
-      let fundef = Hashtbl.find env.functions fn in
-      fundef.return
+  | Call (fn, args) -> (
+      Printf.printf "Check function call of %s\n" fn;
+      let fundef = Hashtbl.find_opt env.functions fn in
+      match fundef with
+      | None -> te_expr (DynCall (Var fn, args)) env
+      | Some def ->
+          if List.length def.args <> List.length args then
+            failwith
+              (Printf.sprintf "Function %s has too few/many arguments" fn)
+          else
+            List.iter2
+              (fun e (t, _) -> if te_expr e env <> t then failwith "" else ())
+              args def.args;
+          def.return)
   | MCall (Var id, fname, _) -> (
       let typ = Hashtbl.find env.typing id in
       match typ with
       | TStruct sct_name ->
           let sct = Hashtbl.find env.structs sct_name in
+          let methods =
+            match sct.parent with
+            | Some p ->
+                let prt = Hashtbl.find env.structs p in
+                prt.methods @ sct.methods
+            | _ -> sct.methods
+          in
           List.fold_right
             (fun (m : fun_def) t -> if m.name = fname then m.return else t)
-            sct.methods TVoid
-      | _ -> failwith "Unknown structure!")
+            methods TVoid
+      | _ ->
+          failwith (Printf.sprintf "%s has not been declared as a structure" id)
+      )
   | MCall (_, _, _) -> TVoid
   | DynCall (e, _) -> te_expr (Deref e) env
   | Read m -> te_mem m env
@@ -116,35 +117,96 @@ and te_mem m env =
             | None -> []
           in
           let rec help = function
-            | [] -> TVoid
+            | [] ->
+                failwith
+                  (Printf.sprintf "Field %s isn't a member of structure %s" fd
+                     sname)
             | (ty, s) :: t -> if s = fd then ty else help t
           in
           help (sct.fields @ parent_fields)
-      | _ -> failwith "This is not a structure!")
+      | _ -> failwith "This is not of a known structure type")
   | Str (Read m, _) -> te_mem m env
-  | _ -> failwith "Semantic error!"
+  | _ -> failwith "Semantic error"
 
-let rec tp_stm s fn env =
+(*
+  tpt_expr returns a simplified typed AST
+  when necessary.
+  
+  It is useful when casting expression occurs
+  or when testing whether a structure is an
+  instance of a particular object.
+
+  e.g.
+  InstanceOf (A, B) -> Val(Bool(True|False))
+  
+*)
+
+let tpt_expr e env =
+  match e with
+  | InstanceOf (e, s) -> (
+      let t = te_expr e env in
+      match t with
+      | TStruct sn ->
+          let sct = Hashtbl.find env.structs sn in
+          Val
+            (Bool
+               (s = sn
+               || match sct.parent with Some ps -> s = ps | None -> false))
+      | _ ->
+          failwith
+            (Printf.sprintf "%s is not defined as an object" (show_expr e)))
+  | _ -> e
+
+(*
+  tpt_stm checks whether a statement is well typed
+  or not and eventually returns a type-indicationless
+  AST, that is more concise.
+*)
+
+let rec tpt_stm fn s env =
+  Printf.printf "%s\n" (show_stm s);
   match s with
   | Assign ld ->
       let id, e = ld.cnt in
-      let t = Hashtbl.find env.typing id in
-      tp_expr e t env
+      let e' = tpt_expr e env in
+      let t_var = Hashtbl.find env.typing id in
+      let t_exp = te_expr e' env in
+      if t_var = t_exp then Assign { ld with cnt = (id, e') } else failwith ""
   | If (ld, s1, s2) ->
-      tp_expr ld.cnt TBool env && tp_seq s1 fn env && tp_seq s2 fn env
-  | While (ld, s) -> tp_expr ld.cnt TBool env && tp_seq s fn env
-  | Return ld -> tp_expr ld.cnt fn.return env
-  | Expr ld -> tp_expr ld.cnt TVoid env
+      let guard = tpt_expr ld.cnt env in
+      let t_guard = te_expr guard env in
+      if t_guard = TBool then
+        let s1' = tpt_seq fn s1 env in
+        let s2' = tpt_seq fn s2 env in
+        If ({ ld with cnt = guard }, s1', s2')
+      else failwith ""
+  | While (ld, s) ->
+      let guard = tpt_expr ld.cnt env in
+      if te_expr guard env = TBool then
+        let s' = tpt_seq fn s env in
+        While ({ ld with cnt = guard }, s')
+      else failwith ""
+  | Return ld ->
+      let e' = tpt_expr ld.cnt env in
+      if te_expr e' env = fn.return then Return { ld with cnt = e' }
+      else failwith ""
+  | Expr ld ->
+      let e' = tpt_expr ld.cnt env in
+      let _ = te_expr e' env in
+      Expr { ld with cnt = e' }
   | Write ld ->
       let m, e = ld.cnt in
-      let mtype = te_mem m env in
-      tp_expr e mtype env
+      let t_m = te_mem m env in
+      let e' = tpt_expr e env in
+      if te_expr e' env = t_m then Write { ld with cnt = (m, e') }
+      else failwith ""
 
-and tp_seq seq fn env =
-  match seq with [] -> true | h :: t -> tp_stm h fn env && tp_seq t fn env
+and tpt_seq fn seq env =
+  match seq with [] -> [] | h :: t -> tpt_stm fn h env :: tpt_seq fn t env
 
-let tp_fun fn env =
+and tpt_fun fn env =
   let fill (t, id) = Hashtbl.add env.typing id t in
   List.iter fill fn.locals;
   List.iter fill fn.args;
-  tp_seq fn.code fn env
+  let sq = tpt_seq fn fn.code env in
+  { fn with code = sq }

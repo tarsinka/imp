@@ -22,6 +22,7 @@ let rec vars = function
   | Var id -> VarSet.singleton id
   | Val _ | New _ | NewArray _ -> VarSet.empty
   | BOP (_, e1, e2) -> VarSet.union (vars e1) (vars e2)
+  | InstanceOf (e, _) -> vars e
   | Deref e | Alloc e -> vars e
   | Ref v -> VarSet.singleton v
   | Call (fn, args) -> VarSet.add fn (vars (DynCall(Var fn, args))) 

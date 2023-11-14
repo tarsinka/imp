@@ -10,6 +10,7 @@
 
 %}
 %token VAR STRUCT FUNCTION
+%token ABSTRACT
 %token<string> VARNAME
 %token<int> INT
 %token<char> CHAR
@@ -26,10 +27,10 @@
 
 (* Types *)
 
-%token TY_INT TY_CHAR TY_BOOL TY_STRING TY_VOID
+%token TY_INT TY_CHAR TY_BOOL TY_STRING TY_VOID INSTANCEOF
 %token EOF
 
-%left ADD SUB MUL DIV MOD AND OR XOR ROL ROR LT LE GT GE EQ NE
+%left ADD SUB MUL DIV MOD AND OR XOR ROL ROR LT LE GT GE EQ NE INSTANCEOF
 %nonassoc LARRAY DOT
 
 %start<Ast.program> prog
@@ -64,6 +65,7 @@ expr:
         | AND ; s = VARNAME { Ref s }
         | fname = VARNAME ; LPAR ; args=separated_list(COMMA, expr) ; RPAR { Call (fname, args) }
         | m=mem { Read m }
+        | e = expr ; INSTANCEOF ; s = VARNAME { InstanceOf(e, s) }
         | e=expr ; DOT ; fname=VARNAME ; LPAR ; args=separated_list(COMMA, expr) ; RPAR { MCall(e, fname, args) }
         | NEW ; s = VARNAME ; LPAR ; args=separated_list(COMMA, expr) ; RPAR { New (s, args) }
         | NEW ; LARRAY ; t=typ ; COMMA ; e=expr ; RARRAY { NewArray(t, e) }
@@ -94,7 +96,7 @@ functions:
 
 structs:
         STRUCT ; name = VARNAME ; parent = option(COLUMN ; p = VARNAME { p }) ; 
-        BEGIN ; fields=list(vars) ; methods=list(functions) ; END { { name ; fields ; methods ; parent } }
+        BEGIN ; fields=list(vars) ; methods=list(functions) ; END { { name ; fields ; methods ; parent ; is_abstract = false } }
 
 typ:
         | TY_VOID       { TVoid }

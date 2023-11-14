@@ -42,7 +42,9 @@ rule token = parse
         | '['           { LARRAY }
         | ']'           { RARRAY }
         | "var"         { VAR }
+        | "abstract"    { ABSTRACT }
         | "struct"      { STRUCT }
+        | "instanceof"  { INSTANCEOF }
         | "new"         { NEW }
         | "function"    { FUNCTION }
         | "return"      { RETURN }

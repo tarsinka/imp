@@ -127,6 +127,17 @@ let rec tr_function gl_env fdef fun_kind =
         @@
         if alloc_b > alloc_a then op t.(ri) t.(ri + 1) t.(ri)
         else op t.(ri) t.(ri) t.(ri + 1)
+    (* | InstanceOf (strc, s) -> (
+        let t = te_expr strc gl_env in
+        match t with
+        | TStruct sn ->
+            let sct = Hashtbl.find gl_env.structs sn in
+            tr_expr ri
+              (Val
+                 (Bool
+                    (s = sn
+                    || match sct.parent with Some ps -> s = ps | None -> false)))
+        | _ -> failwith "") *)
     | Ref id -> (
         Printf.printf "ref %s\n" id;
         match Hashtbl.find_opt env id with
@@ -190,43 +201,80 @@ let rec tr_function gl_env fdef fun_kind =
         @@ move t.(ri) t.(0)
         @@ f
     | MCall (Var id, fname, args) -> (
+        (*
+      We look for the method either in the structure or
+      in its parent, in case we didn't find it. This implies
+      the overrinding.   
+    *)
         let typ = Hashtbl.find gl_env.typing id in
         match typ with
         | TStruct sct_name ->
             let sct = Hashtbl.find gl_env.structs sct_name in
-            let offset = get_sct_method_offset sct fname in
+
+            (*
+              Evaluates the type of each argument   
+            *)
+
+            let args_type = List.fold_right (fun a li -> te_expr a gl_env :: li) args [] in
+
+            let local_offset = get_sct_method_offset sct fname args_type in
+            let nm, os =
+              match sct.parent with
+              | Some s ->
+                  if local_offset = -1 then
+                    let prt = Hashtbl.find gl_env.structs s in
+                    (s, get_sct_method_offset prt fname args_type)
+                  else (sct_name, local_offset)
+              | _ when local_offset = -1 ->
+                  failwith
+                    (Printf.sprintf
+                       "Methods %s does not belong to %s nor its parent" fname
+                       id)
+              | _ -> (sct_name, local_offset)
+            in
             tr_expr ri
               (DynCall
-                 ( Deref
-                     (BOP
-                        ( Add,
-                          Var (desc_fmt sct_name),
-                          Val (Int (4 * (offset + 1))) )),
+                 ( Deref (BOP (Add, Var (desc_fmt nm), Val (Int (4 * (os + 1))))),
                    Var id :: args ))
-        | _ -> failwith "Not a struct!")
+        | _ -> failwith "Not a struct")
     | MCall (_, _, _) -> failwith "Unknown object!"
     | Alloc e ->
         tr_expr ri e @@ move a0 t.(ri) @@ li v0 9 @@ syscall @@ move t.(ri) v0
     | Read m -> tr_expr ri (Deref (tr_mem m))
     | New (name, args) ->
+        (*
+          We add a slot for :
+          - the descriptor
+          - each variable of structure and its parent (included super var)   
+        *)
         let size = 4 + sizeof_struct name gl_env.structs in
         Printf.printf "allocated struct %s size : %d\n" name size;
 
         (*
           To call the constructor and other methods
           within the expr, we assign a temporary name
-          to our register.   
+          to our register.
         *)
         let var = "__var_" ^ name ^ "__" in
 
         Hashtbl.add env var (Reg t.(ri));
         Hashtbl.add gl_env.typing var (TStruct name);
 
+        let stc = Hashtbl.find gl_env.structs name in
+        let prt_desc =
+          match stc.parent with
+          | Some ps -> la t.(ri + 1) (desc_fmt ps)
+          | _ -> li t.(ri + 1) 0
+        in
+
         tr_expr ri (Alloc (Val (Int size)))
         @@ la t.(ri + 1) (desc_fmt name)
         @@ sw t.(ri + 1) 0 t.(ri)
+        @@ prt_desc
+        @@ sw t.(ri + 1) 4 t.(ri)
         @@ tr_expr (ri + 1) (MCall (Var var, "constructor", args))
     | NewArray (_, e) -> tr_expr ri (Alloc e)
+    | _ -> failwith "Unknown expression kind, maybe the typing or analysis process got wrong?"
   (*
         To access memory, we are using the Read expression.
         We assume we can access memory with three different ways :
@@ -290,6 +338,9 @@ let rec tr_function gl_env fdef fun_kind =
         let d, e = ld.cnt in
         tr_expr 0 (tr_mem d) @@ tr_expr 1 e @@ sw t1 0 t0
   in
+  let method_fmt sn (m: fun_def) = 
+    let args_fmt = List.fold_right (fun (arg_t, _) str -> (hash_type arg_t) ^ str) m.args "" in
+    sn ^ "_" ^ m.name ^ "_" ^ args_fmt in
   let tr_struct_methods sct =
     let desc_name = desc_fmt sct.name in
 
@@ -297,11 +348,10 @@ let rec tr_function gl_env fdef fun_kind =
        Then it generates the assemly code of all of the
        methods intern to the struct and get their address.
      *)
-
     Hashtbl.add gl_env.typing desc_name (TPointer TInt);
     List.fold_right
       (fun (me : fun_def) code ->
-        let sname = sct.name ^ "_" ^ me.name in
+        let sname = method_fmt sct.name me in
         Hashtbl.add gl_env.functions sname me;
         tr_function gl_env
           {
@@ -314,6 +364,10 @@ let rec tr_function gl_env fdef fun_kind =
       sct.methods nop
   in
   let tr_struct sct =
+    (*
+      The structure descriptor first contains the parent
+      descriptor address, then its method' address
+    *)
     let desc_size = 4 * (List.length sct.methods + 1) in
     let desc_name = desc_fmt sct.name in
     let assign =
@@ -329,7 +383,7 @@ let rec tr_function gl_env fdef fun_kind =
                  {
                    cnt =
                      ( Raw (BOP (Add, Var desc_name, Val (Int (i * 4)))),
-                       Ref (sct.name ^ "_" ^ m.name) );
+                       Ref (method_fmt sct.name m) );
                    l = -1;
                  })
             @@ code ))
@@ -379,6 +433,20 @@ module Translator = struct
       (fun (f : fun_def) -> Hashtbl.add function_env f.name f)
       (__builtin_print_char_def :: __builtin_print_int_def :: prog.functions);
 
+    (*
+      Altering structs such that they contain
+      super pointer to their parent   
+    *)
+
+    (* let structs =
+         List.fold_right
+           (fun (s : struct_def) sts ->
+             let parent_type =
+               match s.parent with Some ps -> TStruct ps | None -> TVoid
+             in
+             { s with fields = (parent_type, "super") :: s.fields } :: sts)
+           prog.structs []
+       in *)
     let struct_env = Hashtbl.create 16 in
     let globals =
       List.fold_right
@@ -393,11 +461,13 @@ module Translator = struct
     in
 
     Printf.printf "Type-check the code\n";
-    List.iter
+    (* List.iter
       (fun (f : fun_def) ->
         let wc = tp_fun f env in
         if wc then () else failwith "Typecheck error!")
-      prog.functions;
+      prog.functions; *)
+
+    let functions = List.fold_right (fun (f: fun_def) fl -> (tpt_fun f env) :: fl) prog.functions [] in
 
     let opt_funcs =
       List.fold_right
@@ -411,7 +481,7 @@ module Translator = struct
           let rd = deadcode_reduction s [] analysis in
           Printf.printf "%s\n" (show_seq rd);
           { f with code = rd } :: l)
-        prog.functions []
+        functions []
     in
     Printf.printf "Generating assembly code\n";
 

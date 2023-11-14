@@ -9,6 +9,16 @@ type typ =
   | TVoid
 [@@deriving show]
 
+let rec hash_type = function
+  | TInt -> "i"
+  | TChar -> "c"
+  | TBool -> "b"
+  | TString -> "s"
+  | TPointer t -> "p" ^ hash_type t
+  | TArray t -> "a" ^ hash_type t
+  | TStruct str -> "x_" ^ str ^ "_"
+  | TVoid -> "v"
+
 type var = typ * string
 
 type bop =
@@ -37,6 +47,7 @@ type expr =
   | Val of val_type
   | Var of string
   | BOP of bop * expr * expr
+  | InstanceOf of expr * string
   | Alloc of expr
   | Ref of string
   | Deref of expr
@@ -82,6 +93,7 @@ type struct_def = {
   fields : (typ * string) list;
   methods : fun_def list;
   parent : string option;
+  is_abstract : bool
 }
 
 let get_field_offset sct_name field env =
@@ -99,12 +111,19 @@ let get_field_offset sct_name field env =
   in
   aux 1 fields
 
-let get_sct_method_offset sct fname =
+let get_sct_method_offset sct fname args_type =
+  let args_type_cmp a =
+    if List.length a = List.length args_type then
+      List.fold_right2 (fun (x, _) y b -> x = y && b) a args_type true
+    else false
+  in
+
   let _, offset =
     List.fold_right
       (fun (m : fun_def) (it, off) ->
-        if fname = m.name then (it + 1, it) else (it + 1, off))
-      sct.methods (0, 0)
+        if fname = m.name && args_type_cmp m.args then (it + 1, it)
+        else (it + 1, off))
+      sct.methods (0, -1)
   in
   offset
 
