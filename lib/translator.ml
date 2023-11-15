@@ -34,7 +34,7 @@ let rec req_register = function
 
 let desc_fmt sct_name = "__" ^ sct_name ^ "_"
 
-let rec tr_function gl_env fdef fun_kind =
+let rec tr_function gl_env regdist fdef fun_kind =
   (*
   
     Here we instantiate the local hash table for the function.
@@ -49,7 +49,10 @@ let rec tr_function gl_env fdef fun_kind =
       Hashtbl.add env id mm)
     fdef.args;
   List.iteri
-    (fun k (_, id) -> Hashtbl.add env id (Offset (-4 * (k + 2))))
+    (fun k (_, id) ->
+      let ri = Hashtbl.find regdist id in
+      let slot = if ri > 7 then Offset (-4 * (k + 2)) else Reg t.(ri) in
+      Hashtbl.add env id slot)
     fdef.locals;
 
   List.iter (fun (t, id) -> Hashtbl.add gl_env.typing id t) fdef.locals;
@@ -133,17 +136,6 @@ let rec tr_function gl_env fdef fun_kind =
         @@
         if alloc_b > alloc_a then op t.(ri) t.(ri + 1) t.(ri)
         else op t.(ri) t.(ri) t.(ri + 1)
-    (* | InstanceOf (strc, s) -> (
-        let t = te_expr strc gl_env in
-        match t with
-        | TStruct sn ->
-            let sct = Hashtbl.find gl_env.structs sn in
-            tr_expr ri
-              (Val
-                 (Bool
-                    (s = sn
-                    || match sct.parent with Some ps -> s = ps | None -> false)))
-        | _ -> failwith "") *)
     | Ref id -> (
         Printf.printf "ref %s\n" id;
         match Hashtbl.find_opt env id with
@@ -218,7 +210,6 @@ let rec tr_function gl_env fdef fun_kind =
         Printf.printf "%s.%s\n" (show_typ typ) fname;
         match typ with
         | TStruct sct_name | TPointer (TStruct sct_name) ->
-            (* let sct = Hashtbl.find gl_env.structs sct_name in *)
             (*
               Evaluates the type of each argument   
             *)
@@ -229,20 +220,6 @@ let rec tr_function gl_env fdef fun_kind =
             let nm, os =
               get_sct_method_offset sct_name fname args_type gl_env.structs
             in
-            (* let nm, os =
-                 match sct.parent with
-                 | Some s ->
-                     if local_offset = -1 then
-                       let prt = Hashtbl.find gl_env.structs s in
-                       (s, get_sct_method_offset prt fname args_type)
-                     else (sct_name, local_offset)
-                 | _ when local_offset = -1 ->
-                     failwith
-                       (Printf.sprintf
-                          "Methods %s does not belong to %s nor its parent" fname
-                          id)
-                 | _ -> (sct_name, local_offset)
-               in *)
             Printf.printf "Offset of method %s is %d from %s\n" fname os nm;
             tr_expr ri
               (DynCall
@@ -361,18 +338,20 @@ let rec tr_function gl_env fdef fun_kind =
     sn ^ "_" ^ m.name ^ "_" ^ args_fmt
   in
   let tr_struct_methods sct =
+    
     let desc_name = desc_fmt sct.name in
-
     (*
-       Then it generates the assemly code of all of the
+       It generates the assembly code of all of the
        methods intern to the struct and get their address.
      *)
     Hashtbl.add gl_env.typing desc_name (TPointer TInt);
     List.fold_right
       (fun (me : fun_def) code ->
         let sname = method_fmt sct.name me in
+        let analysis = dataflow me.code in
+        let chailin = reg_dist analysis 0 in
         Hashtbl.add gl_env.functions sname me;
-        tr_function gl_env
+        tr_function gl_env chailin
           {
             me with
             name = sname;
@@ -388,6 +367,7 @@ let rec tr_function gl_env fdef fun_kind =
       descriptor address, then its method' address
     *)
     let desc_size = 4 * (List.length sct.methods + 1) in
+    Printf.printf "%s descriptor size %d\n" sct.name desc_size;
     let desc_name = desc_fmt sct.name in
     let assign =
       Assign { cnt = (desc_name, Alloc (Val (Int desc_size))); l = -1 }
@@ -396,7 +376,8 @@ let rec tr_function gl_env fdef fun_kind =
     let _, desc =
       List.fold_right
         (fun (m : fun_def) (i, code) ->
-          ( i + 1,
+          Printf.printf "%s.%s is written in %d\n" sct.name m.name i;
+          ( i - 1,
             tr_stm
               (Write
                  {
@@ -406,7 +387,7 @@ let rec tr_function gl_env fdef fun_kind =
                    l = -1;
                  })
             @@ code ))
-        sct.methods (1, nop)
+        sct.methods (List.length sct.methods, nop)
     in
     tr_stm assign @@ tr_stm parent @@ desc
   in
@@ -467,37 +448,35 @@ module Translator = struct
 
     Printf.printf "[i] type-checking the imp code\n";
 
-    (* List.iter
-       (fun (f : fun_def) ->
-         let wc = tp_fun f env in
-         if wc then () else failwith "Typecheck error!")
-       prog.functions; *)
     let functions =
       List.fold_right
         (fun (f : fun_def) fl -> tpt_fun f env :: fl)
         prog.functions []
     in
-
+(* 
     let opt_funcs =
       List.fold_right
         (fun f l ->
           let s = f.code in
-          (* Printf.printf "%s\n" (show_seq s); *)
           let analysis = dataflow s in
-          (* print_analysis analysis; *)
-          (* let chailin = reg_dist analysis 0 in
-             Hashtbl.iter (fun k v -> Printf.printf "%s -> %d\n" k v) chailin; *)
+          let chailin = reg_dist analysis 0 in
+          Hashtbl.iter (fun k v -> Printf.printf "%s -> %d\n" k v) chailin;
           let rd = deadcode_reduction s [] analysis in
-          (* Printf.printf "%s\n" (show_seq rd); *)
           { f with code = rd } :: l)
         functions []
-    in
+    in *)
     Printf.printf "Generating assembly code\n";
 
     let fn_asm =
       List.fold_right
-        (fun (def : Ast.fun_def) code -> tr_function env def Function @@ code)
-        opt_funcs nop
+        (fun (def : Ast.fun_def) code -> 
+          let s = def.code in
+          let analysis = dataflow s in
+          let chailin = reg_dist analysis 0 in
+          Hashtbl.iter (fun k v -> Printf.printf "%s -> %d\n" k v) chailin;
+          let rd = deadcode_reduction s [] analysis in
+          tr_function env chailin { def with code = rd } Function @@ code)
+        functions nop
     in
     let text = head @@ fn_asm @@ __builtin_print_int @@ __builtin_print_char in
     let data =

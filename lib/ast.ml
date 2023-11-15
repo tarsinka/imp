@@ -119,10 +119,10 @@ let rec get_sct_method_offset sct_name fname args_type env =
   in
   let sct = Hashtbl.find env sct_name in
   let rec aux i = function
-    | [] -> (
+    | [] -> ((
         match sct.parent with
         | Some ps -> get_sct_method_offset ps fname args_type env
-        | None -> (sct_name, -1))
+        | None -> (sct_name, -1)))
     | (m : fun_def) :: t ->
         if m.name = fname && args_type_cmp m.args then (sct_name, i)
         else aux (i + 1) t

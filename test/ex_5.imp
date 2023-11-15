@@ -14,6 +14,11 @@ struct monoid : algebraic_structure
         law = l;
         id = e;
     }
+
+    function int get_id()
+    {
+        return id;
+    }
 }
 
 struct group : monoid
@@ -35,8 +40,9 @@ function int main()
     var bool b;
 
     m = new monoid('N', '+', 0);
-    print_int(m.id);
     print_char(m.set);
+    print_int(m.get_id());
+    print_int(addition(5, 6));
 
     as = new monoid('Q', '*', 1);
     print_char(as.set);
@@ -56,4 +62,9 @@ function int main()
     }
 
     return g.id;
+}
+
+function int addition(int x, int y)
+{
+    return x + y;
 }
