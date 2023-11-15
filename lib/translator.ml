@@ -8,7 +8,7 @@ open Builtins
 open Format
 
 type function_kind = Function | Method
-type memory_mapper = Reg of register | Offset of int
+type memory_mapper = Reg of int * register | Offset of int
 
 let tr_bop = function
   | Add -> add
@@ -34,7 +34,7 @@ let rec req_register = function
 
 let desc_fmt sct_name = "__" ^ sct_name ^ "_"
 
-let rec tr_function gl_env regdist fdef fun_kind =
+let rec tr_function gl_env _ fdef fun_kind =
   (*
   
     Here we instantiate the local hash table for the function.
@@ -43,15 +43,22 @@ let rec tr_function gl_env regdist fdef fun_kind =
   *)
   let env = Hashtbl.create 16 in
 
+  (* let ri_offset = 1 + Hashtbl.fold (fun _ v i -> if v > i then v else i) regdist 0 in *)
+  let ri_offset = 0 in
+  Printf.printf "RI OFF %d\n" ri_offset;
+
   List.iteri
     (fun k (_, id) ->
-      let mm = if k < 0 then Reg a.(k) else Offset (4 * (k + 1)) in
+      let os = 4 * (k + 1) in
+      let mm = if k < 0 then Reg (os, a.(k)) else Offset os in
       Hashtbl.add env id mm)
     fdef.args;
   List.iteri
     (fun k (_, id) ->
-      let ri = Hashtbl.find regdist id in
-      let slot = if ri > 7 then Offset (-4 * (k + 2)) else Reg t.(ri) in
+      (* let ri = Hashtbl.find regdist id in *)
+      let ri = 8 in
+      let os = -4 * (k + 2) in
+      let slot = if ri > 7 then Offset os else Reg (os, t.(ri)) in
       Hashtbl.add env id slot)
     fdef.locals;
 
@@ -77,7 +84,7 @@ let rec tr_function gl_env regdist fdef fun_kind =
     | Var id -> (
         match Hashtbl.find_opt env id with
         | Some (Offset os) -> lw t.(ri) os fp
-        | Some (Reg rg) -> move t.(ri) rg
+        | Some (Reg (_, rg)) -> move t.(ri) rg
         | None -> (
             match Hashtbl.find_opt gl_env.typing id with
             | Some _ -> la t.(ri) id @@ lw t.(ri) 0 t.(ri)
@@ -140,7 +147,15 @@ let rec tr_function gl_env regdist fdef fun_kind =
         Printf.printf "ref %s\n" id;
         match Hashtbl.find_opt env id with
         | Some (Offset os) -> addi t.(ri) fp os
-        | Some (Reg _) -> failwith "Bad memory access!"
+        | Some (Reg (os, pr)) ->
+          (*
+            Stores the register value on stack
+            for common use and pointer arithmetic.
+          *)
+          Hashtbl.replace env id (Offset os);
+          addi t.(ri) fp os @@
+          sw pr 0 t.(ri)
+          (* failwith "Bad memory access!" *)
         | None -> la t.(ri) id)
     | Deref e -> tr_expr ri e @@ lw t.(ri) 0 t.(ri)
     | Call (fn, args) when fun_kind = Method ->
@@ -246,7 +261,7 @@ let rec tr_function gl_env regdist fdef fun_kind =
         *)
         let var = "__var_" ^ name ^ "__" in
 
-        Hashtbl.add env var (Reg t.(ri));
+        Hashtbl.add env var (Reg (0, t.(ri)));
         Hashtbl.add gl_env.typing var (TStruct name);
 
         let stc = Hashtbl.find gl_env.structs name in
@@ -304,11 +319,11 @@ let rec tr_function gl_env regdist fdef fun_kind =
   and tr_stm = function
     | Assign ld -> (
         let id, e = ld.cnt in
-        tr_expr 0 e
+        tr_expr ri_offset e
         @@
         match Hashtbl.find_opt env id with
         | Some (Offset os) -> sw t0 os fp
-        | Some (Reg rg) -> move rg t0
+        | Some (Reg (_, rg)) -> move rg t0
         | None when fun_kind = Method ->
             tr_stm
               (Write { cnt = (Str (Deref (Var "__self__"), id), e); l = ld.l })
@@ -317,19 +332,19 @@ let rec tr_function gl_env regdist fdef fun_kind =
         let then_label = label_fmt () in
         let end_label = label_fmt () in
 
-        tr_expr 0 ld.cnt @@ bnez t0 then_label @@ tr_seq s2 @@ b end_label
+        tr_expr ri_offset ld.cnt @@ bnez t0 then_label @@ tr_seq s2 @@ b end_label
         @@ label then_label @@ tr_seq s1 @@ label end_label
     | While (ld, s) ->
         let test_label = label_fmt () in
         let code_label = label_fmt () in
 
         b test_label @@ label code_label @@ tr_seq s @@ label test_label
-        @@ tr_expr 0 ld.cnt @@ bnez t0 code_label
-    | Return ld -> tr_expr 0 ld.cnt @@ subi sp fp 4 @@ pop ra @@ pop fp @@ jr ra
-    | Expr ld -> tr_expr 0 ld.cnt
+        @@ tr_expr ri_offset ld.cnt @@ bnez t0 code_label
+    | Return ld -> tr_expr ri_offset ld.cnt @@ subi sp fp 4 @@ pop ra @@ pop fp @@ jr ra
+    | Expr ld -> tr_expr ri_offset ld.cnt
     | Write ld ->
         let d, e = ld.cnt in
-        tr_expr 0 (tr_mem d) @@ tr_expr 1 e @@ sw t1 0 t0
+        tr_expr ri_offset (tr_mem d) @@ tr_expr (ri_offset + 1) e @@ sw t1 0 t0
   in
   let method_fmt sn (m : fun_def) =
     let args_fmt =
